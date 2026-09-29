@@ -1,0 +1,6 @@
+{
+  "schema": "game-room.opening-schedule.v1",
+  "roomId": "tropical-island",
+  "primaryArrival": {"openingId": "", "exception": "Open outdoor island: the playable shoreline has no enclosing wall or entrance aperture."},
+  "openings": []
+}

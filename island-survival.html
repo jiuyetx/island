@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>潮汐孤岛：生存与经营</title>
+<style>
+  :root { color-scheme: dark; font-family: system-ui,-apple-system,"PingFang SC",sans-serif; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html,body { width:100%;height:100%;margin:0;overflow:hidden;background:#092b38;touch-action:none; }
+  #game { display:block;width:100%;height:100%; }
+  .glass { color:#f2f3dc;background:linear-gradient(145deg,rgba(12,45,50,.88),rgba(11,36,45,.72));border:1px solid rgba(211,222,166,.34);box-shadow:0 8px 28px #031a2280,inset 0 1px #ffffff1a;backdrop-filter:blur(12px); }
+  #status { position:fixed;left:max(12px,env(safe-area-inset-left));top:max(12px,env(safe-area-inset-top));width:min(310px,calc(100vw - 100px));padding:11px 14px;border-radius:16px;pointer-events:none;font-size:12px;line-height:1.6; }
+  #status strong { display:block;font-size:15px;letter-spacing:.04em;margin-bottom:2px; }
+  #weather { color:#f6d78d; }
+  #shop-open { position:fixed;right:max(12px,env(safe-area-inset-right));top:max(12px,env(safe-area-inset-top));padding:11px 17px;border-radius:14px;font-weight:750; }
+  #modes { position:fixed;right:max(12px,env(safe-area-inset-right));top:66px;display:grid;gap:7px;width:94px; }
+  button { color:inherit;font:inherit;border:1px solid #e2e1b04a;border-radius:13px;background:#123d42d9;cursor:pointer;touch-action:manipulation; }
+  button:active { transform:translateY(1px);filter:brightness(1.2); }
+  .mode { padding:9px 8px;font-size:12px;background:#10353ecf; }
+  .mode.active { background:#d4bd6e;color:#192f30;border-color:#fff0ad;box-shadow:0 0 18px #f6d88a55; }
+  #hint { position:fixed;left:50%;bottom:calc(108px + env(safe-area-inset-bottom));transform:translateX(-50%);max-width:min(88vw,520px);padding:9px 15px;border-radius:999px;font-size:12px;text-align:center;white-space:nowrap;pointer-events:none; }
+  #action { position:fixed;right:max(18px,env(safe-area-inset-right));bottom:calc(20px + env(safe-area-inset-bottom));width:86px;height:86px;border-radius:50%;background:linear-gradient(145deg,#ead48d,#b98c4d);color:#19383a;font-weight:850;font-size:14px;box-shadow:0 8px 24px #03182088; }
+  #seed-toggle { display:none;position:fixed;right:115px;bottom:calc(39px + env(safe-area-inset-bottom));padding:12px 14px;border-radius:12px;font-size:12px; }
+  #pad { position:fixed;left:max(18px,env(safe-area-inset-left));bottom:calc(18px + env(safe-area-inset-bottom));width:132px;height:132px;display:grid;grid-template:repeat(3,1fr)/repeat(3,1fr);gap:4px; }
+  .dir { border-radius:12px;background:#0d323cc9;color:#fff2cf;font-size:20px;touch-action:none;user-select:none; }
+  .dir[data-dir="up"]{grid-area:1/2}.dir[data-dir="left"]{grid-area:2/1}.dir[data-dir="down"]{grid-area:2/2}.dir[data-dir="right"]{grid-area:2/3}
+  #toast { position:fixed;top:22%;left:50%;transform:translate(-50%,-8px);opacity:0;transition:.2s;pointer-events:none;padding:11px 17px;border-radius:14px;font-size:13px;text-align:center;max-width:88vw; }
+  #toast.show { opacity:1;transform:translate(-50%,0); }
+  #shop { display:none;position:fixed;inset:0;z-index:5;place-items:center;background:#03141bbd;padding:18px; }
+  #shop.open { display:grid; }
+  .panel { width:min(650px,96vw);max-height:min(82vh,760px);overflow:auto;border-radius:22px;padding:20px; }
+  .panel-head { display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px; }
+  .panel h2 { margin:0;font-size:22px; }
+  .panel p { color:#c6d8c3;font-size:12px;margin:6px 0 14px;line-height:1.5; }
+  #goods { display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:9px; }
+  .good { text-align:left;padding:12px;border-radius:14px;background:#17454a; }
+  .good b { display:block;font-size:13px;margin-bottom:4px; }
+  .good small { display:block;color:#bfd1be;font-size:11px;min-height:30px; }
+  .good em { display:block;color:#f2d88c;font-style:normal;font-weight:750;margin-top:7px; }
+  #close-shop { padding:8px 12px; }
+  @media(max-width:520px){ #status{font-size:10px;width:min(246px,calc(100vw - 100px));padding:8px 10px} #status strong{font-size:13px} #modes{top:62px;width:84px;gap:5px}.mode{padding:8px 5px;font-size:11px} #pad{width:116px;height:116px} #action{width:76px;height:76px;font-size:12px} #seed-toggle{right:101px;bottom:calc(35px + env(safe-area-inset-bottom));padding:10px;font-size:11px} #hint{font-size:10px;bottom:calc(98px + env(safe-area-inset-bottom))} }
+</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js"}}</script>
+</head>
+<body>
+<canvas id="game" aria-label="潮汐孤岛 3D 游戏画面"></canvas>
+<div id="status" class="glass"><strong>潮汐孤岛 · 第 <span id="day">1</span> 天</strong><span id="clock">06:00　☀️</span><br><span id="weather">天气：晴　·　潮位：退潮</span><br><span id="wallet">金币 60</span><br><span id="inventory">鱼 0　蔬菜 0　水果 0</span><br><span id="gear">船锚未装　农田未设防</span></div>
+<button id="shop-open" class="glass">商店　▤</button>
+<div id="modes"></div>
+<div id="hint" class="glass">WASD 移动 · 靠近海边按空格钓鱼 · E 使用</div>
+<div id="pad" aria-label="移动方向"><button class="dir" data-dir="up">▲</button><button class="dir" data-dir="left">◀</button><button class="dir" data-dir="down">▼</button><button class="dir" data-dir="right">▶</button></div>
+<button id="seed-toggle" class="glass">播种：蔬菜</button>
+<button id="action">使用<br>Space</button>
+<div id="toast" class="glass"></div>
+<div id="shop" role="dialog" aria-modal="true" aria-label="岛屿商店"><div class="panel glass"><div class="panel-head"><h2>海岛杂货铺</h2><button id="close-shop">继续冒险 ✕</button></div><p id="shop-note">出售收获换金币，提前备好台风物资。生存物资和升级只影响本地存档。</p><div id="goods"></div></div></div>
+<script type="module">
+import * as THREE from 'three';
+
+// 单文件浏览器原型；Three.js 通过 CDN 加载，微信小游戏版本应改为本地 bundle。
+const $ = (id) => document.getElementById(id);
+const DAY_LENGTH = 150; // 原型节奏：约 2.5 分钟为一个游戏日
+const clamp = THREE.MathUtils.clamp;
+const distance = (a,b) => Math.hypot(a.x-b.x,a.z-b.z);
+const defaults = () => ({
+  version:1, gold:60, fish:0, fishValue:0, shells:0, pearls:0, vegetables:0, fruits:0,
+  seeds:4, fruitSeeds:2, water:3, rodLevel:1, boatSpeed:1, hasBoat:true,
+  boatAnchor:false, farmGuard:false, farmCover:false, houseReinforced:false,
+  gameTime:0, stormDay:3, stormHandled:0, lastRod:0, lastDive:0, selectedSeed:'veg',
+  crops:Array.from({length:6},()=>({type:'',growth:0,waterUntil:0})), houseHp:100,
+});
+function loadSave(){
+  try {
+    const raw=JSON.parse(localStorage.getItem('island-survival-v1')||'null');
+    if(!raw||raw.version!==1)return defaults();
+    const base={...defaults(),...raw};
+    base.crops=Array.from({length:6},(_,i)=>({type:'',growth:0,waterUntil:0,...(raw.crops?.[i]||{})}));
+    return base;
+  }catch{return defaults();}
+}
+let state=loadSave();
+let saveTimer=0;
+function save(){ clearTimeout(saveTimer);saveTimer=setTimeout(()=>{try{localStorage.setItem('island-survival-v1',JSON.stringify(state));}catch{}},250); }
+let toastTimer=0;
+function toast(text){const el=$('toast');el.textContent=text;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),2400);}
+
+// --- Three.js 场景与 low-poly 岛屿 ---
+const canvas=$('game');
+const renderer=new THREE.WebGLRenderer({canvas,antialias:true,powerPreference:'high-performance'});
+renderer.setPixelRatio(Math.min(devicePixelRatio||1,1.6));
+renderer.setSize(innerWidth,innerHeight,false);
+renderer.outputColorSpace=THREE.SRGBColorSpace;
+renderer.toneMapping=THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure=1.05;
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x77b9bc);
+scene.fog=new THREE.FogExp2(0x77b9bc,.004);
+const camera=new THREE.PerspectiveCamera(48,innerWidth/innerHeight,.1,240);
+const hemi=new THREE.HemisphereLight(0xd9f3ee,0x546250,1.7);scene.add(hemi);
+const sun=new THREE.DirectionalLight(0xffedc3,2.7);sun.position.set(-18,28,-10);sun.castShadow=true;sun.shadow.mapSize.set(1024,1024);scene.add(sun);
+const groundMat=(color,roughness=1)=>new THREE.MeshStandardMaterial({color,roughness,flatShading:true});
+const seaMat=new THREE.ShaderMaterial({
+  transparent:true,uniforms:{uTime:{value:0},uDepth:{value:0},uDay:{value:1},uStorm:{value:0}},
+  vertexShader:`uniform float uTime; varying vec3 vWorld; varying float vWave; void main(){vec3 p=position;p.z+=sin(p.x*.16+uTime*.8)*.18+cos(p.y*.19-uTime*.65)*.13;vWave=p.z;vec4 w=modelMatrix*vec4(p,1.);vWorld=w.xyz;gl_Position=projectionMatrix*viewMatrix*w;}`,
+  fragmentShader:`uniform float uDepth;uniform float uDay;uniform float uStorm;varying vec3 vWorld;varying float vWave;void main(){float r=length(vWorld.xz);float d=smoothstep(16.,42.,r);vec3 shallow=vec3(.24,.72,.65);vec3 deep=vec3(.025,.24,.36);vec3 c=mix(shallow,deep,d);float glint=pow(max(0.,sin(vWorld.x*.54+vWorld.z*.26+vWave*3.)),16.);c+=vec3(.22,.34,.28)*glint*(.25+.6*uDay);c=mix(c,vec3(.055,.105,.16),uStorm*.55);float alpha=.78+glint*.13;gl_FragColor=vec4(c,alpha);}`,
+});
+const water=new THREE.Mesh(new THREE.PlaneGeometry(190,190,48,48),seaMat);water.rotation.x=-Math.PI/2;water.position.y=-.12;water.renderOrder=1;scene.add(water);
+function add(mesh,parent=scene){mesh.castShadow=true;mesh.receiveShadow=true;parent.add(mesh);return mesh;}
+function box(w,h,d,color,x,y,z,material=null){const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),material||groundMat(color));m.position.set(x,y+h/2,z);return add(m);}
+function ico(radius,color,x,y,z,detail=1){const m=new THREE.Mesh(new THREE.IcosahedronGeometry(radius,detail),groundMat(color));m.position.set(x,y,z);return add(m);}
+function cone(radius,height,color,x,y,z,sides=7){const m=new THREE.Mesh(new THREE.ConeGeometry(radius,height,sides),groundMat(color));m.position.set(x,y+height/2,z);return add(m);}
+
+function islandRing(r0,y0,r1,y1,color){
+  const vertices=[],indices=[],segments=48;
+  for(let i=0;i<=segments;i++){const a=i/segments*Math.PI*2;vertices.push(Math.cos(a)*r0,y0,Math.sin(a)*r0,Math.cos(a)*r1,y1,Math.sin(a)*r1);}
+  for(let i=0;i<segments;i++){const n=i*2;indices.push(n,n+3,n+1,n,n+2,n+3);}
+  const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(vertices,3));g.setIndex(indices);g.computeVertexNormals();
+  const m=new THREE.Mesh(g,groundMat(color));m.receiveShadow=true;scene.add(m);
+}
+// 岛体分层：平顶草地、缓坡沙滩、浅海礁石，方便读懂可行走区域。
+const center=new THREE.Mesh(new THREE.CylinderGeometry(10.4,12,1.25,40,1),groundMat(0x74a95c));center.position.y=.15;add(center);
+islandRing(10.1,.76,13,.56,0xcbb982);
+islandRing(13,.56,16,.04,0xe3cf9b);
+islandRing(16,.04,19,-1.25,0x827c68);
+islandRing(19,-1.25,22,-3.1,0x395c58);
+
+// 房屋、商店、农田与码头均由基础几何体构成。
+function palm(x,z,s=1){
+  const group=new THREE.Group();group.position.set(x,0,z);group.scale.setScalar(s);scene.add(group);
+  const trunk=add(new THREE.Mesh(new THREE.CylinderGeometry(.25,.42,4,7),groundMat(0x866344)),group);trunk.position.y=2;trunk.rotation.z=-.1;
+  for(let i=0;i<7;i++){const a=i*Math.PI*2/7;const leaf=add(new THREE.Mesh(new THREE.ConeGeometry(.34,4.2,5),groundMat(i%2?0x3d8b53:0x66ae59)),group);leaf.position.set(Math.cos(a)*1.35,4.2,Math.sin(a)*1.35);leaf.rotation.z=Math.cos(a)*-.52;leaf.rotation.x=Math.sin(a)*.52-Math.PI/2;}
+  return group;
+}
+for(const [x,z,s] of [[-7,-8,1],[-2,7,.9],[7,5,1.1],[9,-1,.8],[-10,3,.8],[2,9,.9]])palm(x,z,s);
+// 远海礁石与珊瑚，标出潜水区。
+for(let i=0;i<15;i++){const a=i*2.4,r=25+(i%4)*2;ico(.6+(i%3)*.24,[0x5a7771,0x6f8074,0x807665][i%3],Math.cos(a)*r,-1.4,Math.sin(a)*r,0);}
+for(let i=0;i<8;i++){const a=i*.8,r=29+(i%3)*2;cone(.38,.9,[0xef9b7b,0x9d8ed1,0x73c9bb][i%3],Math.cos(a)*r,-1.6,Math.sin(a)*r,6);}
+// 小屋
+box(5,3.2,4,0xe8d7b5,-1,.75,-8);const roof=new THREE.Mesh(new THREE.ConeGeometry(4,2.2,4),groundMat(0x9b5945));roof.position.set(1,4.25,-8);roof.rotation.y=Math.PI/4;add(roof);box(.95,1.8,.1,0x75513e,1,.75,-5.95);
+// 商店
+box(4,2.8,3.4,0xd6ae75,6,.65,-4.5);const shopRoof=new THREE.Mesh(new THREE.ConeGeometry(3.3,1.5,4),groundMat(0x4a7470));shopRoof.position.set(6,3.15,-4.5);shopRoof.rotation.y=Math.PI/4;add(shopRoof);box(2.4,1.3,.15,0x4e7772,6,1.1,-2.77);
+// 木质码头
+for(let i=0;i<7;i++)box(1.1,.18,.58,0xb48757,11,.05,1.2+i*.6);
+for(const x of [10.4,11.6])for(const z of [1.2,4.8])cone(.13,1.3,0x77593f,x,-.8,z,7);
+// 农田六块，后三块更低，涨潮时更容易受损。
+const fieldPositions=[];
+for(let i=0;i<6;i++){
+  const x=-8+(i%2)*2.15,z=-4.4+Math.floor(i/2)*1.9;fieldPositions.push(new THREE.Vector3(x,0,z));
+  const plot=box(1.7,.15,1.35,0x795c3f,x-.85,.72,z-.675);plot.userData.field=i;
+  for(let k=0;k<4;k++)box(.055,.035,1.3,0x9b7b52,x-.55+k*.36,.9,z-.65);
+}
+const cropMeshes=[];
+function cropVisual(index){
+  const p=fieldPositions[index],data=state.crops[index];
+  cropMeshes[index]?.traverse(o=>{if(o.isMesh){o.geometry.dispose();if(Array.isArray(o.material))o.material.forEach(m=>m.dispose());else o.material.dispose();}});
+  if(cropMeshes[index])scene.remove(cropMeshes[index]);
+  if(!data.type)return;
+  const g=new THREE.Group();g.position.copy(p);scene.add(g);
+  const size=.18+.8*clamp(data.growth,0,1);
+  for(let n=0;n<3;n++){
+    const stalk=add(new THREE.Mesh(new THREE.ConeGeometry(.13*size,.62*size,5),groundMat(data.type==='fruit'?0x6b9a43:0x4f974d)),g);stalk.position.set((n-1)*.3,.9+.28*size,0);stalk.rotation.z=(n-1)*-.22;
+    if(data.type==='fruit'&&data.growth>.62){const fruit=new THREE.Mesh(new THREE.IcosahedronGeometry(.13,0),groundMat(0xe8874b));fruit.position.set((n-1)*.3,.9+.22*size,.12);add(fruit,g);}
+  }
+  cropMeshes[index]=g;
+}
+state.crops.forEach((_,i)=>cropVisual(i));
+
+// 主角与远海航船。
+const player=new THREE.Group();scene.add(player);
+const body=add(new THREE.Mesh(new THREE.CapsuleGeometry(.36,.7,3,6),groundMat(0x386e68)),player);body.position.y=.68;
+const head=add(new THREE.Mesh(new THREE.SphereGeometry(.32,8,6),groundMat(0xd49b72)),player);head.position.y=1.43;
+const hat=add(new THREE.Mesh(new THREE.ConeGeometry(.48,.22,8),groundMat(0xd8bd7a)),player);hat.position.y=1.74;
+player.position.set(9,0,2);
+const boat=new THREE.Group();scene.add(boat);
+const hull=add(new THREE.Mesh(new THREE.CapsuleGeometry(.72,3,3,7),groundMat(0x8d6543)),boat);hull.rotation.y=Math.PI/2;hull.scale.set(.7,.5,1);hull.position.y=.15;
+const deck=add(new THREE.Mesh(new THREE.BoxGeometry(2.5,.2,1.25),groundMat(0xd4b47c)),boat);deck.position.y=.52;
+const mast=add(new THREE.Mesh(new THREE.CylinderGeometry(.07,.11,2.8,6),groundMat(0x755138)),boat);mast.position.set(.15,1.9,0);
+const sail=add(new THREE.Mesh(new THREE.BufferGeometry(),groundMat(0xf0e0b2)),boat);const sailGeom=new THREE.BufferGeometry();sailGeom.setAttribute('position',new THREE.Float32BufferAttribute([.2,.65,0, .2,3.05,0, 1.4,.85,0, .2,3.05,0, 1.4,2.65,0, 1.4,.85,0],3));sailGeom.computeVertexNormals();sail.geometry.dispose();sail.geometry=sailGeom;sail.material.side=THREE.DoubleSide;sail.position.z=.08;
+boat.position.set(12.5,0,2.8);boat.visible=state.hasBoat;
+
+const sunBall=new THREE.Mesh(new THREE.SphereGeometry(1.3,12,8),new THREE.MeshBasicMaterial({color:0xffd37a}));scene.add(sunBall);
+const moonBall=new THREE.Mesh(new THREE.SphereGeometry(.9,10,8),new THREE.MeshBasicMaterial({color:0xdbe8f5}));scene.add(moonBall);
+// 暴雨粒子简单复用 BufferGeometry，避免每帧创建对象。
+const rainCount=180,rainPositions=new Float32Array(rainCount*6);for(let i=0;i<rainCount;i++){const j=i*6;rainPositions[j]=(Math.random()-.5)*60;rainPositions[j+1]=Math.random()*24;rainPositions[j+2]=(Math.random()-.5)*60;rainPositions[j+3]=rainPositions[j]-.25;rainPositions[j+4]=rainPositions[j+1]-.8;rainPositions[j+5]=rainPositions[j+2];}
+const rainGeo=new THREE.BufferGeometry();rainGeo.setAttribute('position',new THREE.BufferAttribute(rainPositions,3));const rain=new THREE.LineSegments(rainGeo,new THREE.LineBasicMaterial({color:0xb8d8dc,transparent:true,opacity:.52}));rain.visible=false;scene.add(rain);
+
+// --- 状态机与玩法 ---
+let mode='walk',riding=false,diving=false,oxygen=100,fishTimer=0,diveTimer=0,lastTideHigh=false;
+const keys=new Set(),pad=new Set(),held={up:0,down:0,left:0,right:0};
+const modes=[['walk','步行'],['boat','驾船'],['fish','钓鱼'],['farm','种地'],['dive','潜水']];
+const modeBox=$('modes');
+function renderModes(){modeBox.innerHTML='';for(const[id,label]of modes){const b=document.createElement('button');b.className='mode'+(id===mode?' active':'');b.textContent=label;b.addEventListener('click',()=>setMode(id));modeBox.appendChild(b);}}
+function actor(){return riding?boat:player;}
+function setMode(next){
+  if(next==='boat'){
+    if(!state.hasBoat){toast('船不在了，去商店买一艘');return;}
+    if(distance(player.position,boat.position)>5.5&&!riding){toast('走到码头边靠近小船再上船');return;}
+    riding=true;diving=false;player.visible=false;boat.visible=true;
+  } else if(next==='walk'&&riding){riding=false;diving=false;player.visible=true;player.position.set(boat.position.x-2,0,boat.position.z+1.4);}
+  else if(next==='dive'){
+    if(riding){if(Math.hypot(boat.position.x,boat.position.z)<23){toast('先驾船驶出浅海再潜水');return;}player.position.set(boat.position.x,0,boat.position.z);riding=false;player.visible=true;}
+    if(Math.hypot(player.position.x,player.position.z)<23){toast('潜水点在外海，先把船开到珊瑚礁');return;}
+    diving=true;player.visible=true;oxygen=100;
+  } else if(riding&&next!=='fish'){riding=false;player.visible=true;player.position.set(boat.position.x-2,0,boat.position.z+1.4);}
+  if(next!=='dive')diving=false;
+  mode=next;renderModes();updateAction();
+}
+function updateAction(){
+  const labels={walk:'行动\nE',boat:'抛锚\nSpace',fish:'抛竿\nSpace',farm:'耕作\nE',dive:'采海\nE'};
+  $('action').innerHTML=labels[mode]||'行动';$('seed-toggle').style.display=mode==='farm'?'block':'none';
+  const hints={walk:'WASD / 左下方向键移动 · 靠海边可钓鱼',boat:'驾船驶往蓝色深海区 · Space 抛锚/起锚',fish:'在海边或船上按空格抛竿，鱼获在商店出售',farm:'走到农田旁：空地播种，作物生长中浇水，成熟后收获',dive:'仅能在外海潜水，E 采集海产；氧气耗尽自动上浮'};$('hint').textContent=hints[mode];
+}
+function nearestPlot(){let best=-1,bestD=Infinity;fieldPositions.forEach((p,i)=>{const d=distance(player.position,p);if(d<bestD){bestD=d;best=i;}});return bestD<4.2?best:-1;}
+function farmAction(){
+  const i=nearestPlot();if(i<0){toast('靠近农田再操作');return;}
+  const c=state.crops[i];
+  if(!c.type){const fruit=state.selectedSeed==='fruit';const key=fruit?'fruitSeeds':'seeds';if(!state[key]){toast(fruit?'没有水果种子，商店可以买':'没有蔬菜种子，商店可以买');return;}state[key]--;c.type=fruit?'fruit':'veg';c.growth=.02;c.waterUntil=0;cropVisual(i);toast(fruit?'种下水果种子':'种下蔬菜种子');}
+  else if(c.growth>=1){if(c.type==='fruit')state.fruits+=2;else state.vegetables+=2;toast(c.type==='fruit'?'收获水果 ×2':'收获蔬菜 ×2');c.type='';c.growth=0;c.waterUntil=0;cropVisual(i);}
+  else if(c.waterUntil<state.gameTime){if(state.water<=0){toast('水桶没水了，到商店买水');return;}state.water--;c.waterUntil=state.gameTime+32;toast('浇水成功，作物会长得更快');}
+  else toast(`作物生长中 ${Math.floor(c.growth*100)}% · 水分充足`);
+  save();refreshHud();
+}
+function castRod(){
+  const p=actor(),r=Math.hypot(p.position.x,p.position.z);
+  if(r<10.5||r>58){toast('走到岸边或驾船前往外海再钓鱼');return;}
+  if(state.gameTime-fishTimer<3){toast('鱼竿还在收线');return;}fishTimer=state.gameTime;
+  const deep=(r>23||riding),chance=Math.min(.94,.63+(state.rodLevel-1)*.07);
+  if(Math.random()>chance){toast('鱼儿脱钩了，再试一次');return;}
+  const value=deep?(Math.random()<.22?42:26):(Math.random()<.16?24:12);
+  state.fish++;state.fishValue+=value;toast(`${deep?'深海':'海岸'}捕获鱼 ×1 · 估值 ${value} 金币`);save();refreshHud();
+}
+function diveAction(){
+  if(!diving||Math.hypot(player.position.x,player.position.z)<23){toast('需要在外海水域潜水');return;}
+  if(state.gameTime-diveTimer<7){toast('海底资源正在恢复');return;}diveTimer=state.gameTime;
+  if(Math.random()<.2){state.pearls++;toast('发现一颗珍珠！');}else{state.shells+=1+Math.floor(Math.random()*2);toast('采到海贝与海藻');}save();refreshHud();
+}
+function performAction(){
+  if(mode==='walk'){if(distance(player.position,boat.position)<5.5&&state.hasBoat)setMode('boat');else if(nearestPlot()>=0){setMode('farm');farmAction();}else if(Math.hypot(player.position.x,player.position.z)>10.5){setMode('fish');castRod();}else toast('靠近船、农田或海岸使用');}
+  else if(mode==='boat'){boat.userData.anchored=!boat.userData.anchored;toast(boat.userData.anchored?'抛锚停泊':'起锚，可以航行');}
+  else if(mode==='fish')castRod();else if(mode==='farm')farmAction();else if(mode==='dive')diveAction();
+}
+$('action').addEventListener('click',performAction);
+$('seed-toggle').addEventListener('click',()=>{state.selectedSeed=state.selectedSeed==='veg'?'fruit':'veg';$('seed-toggle').textContent=`播种：${state.selectedSeed==='veg'?'蔬菜':'水果'}`;});
+
+// 商店支持买物资/升级，以及一次性售出鱼货和农产品。
+function goods(){
+  const rows=[
+    {id:'sell',name:'出售全部收获',desc:`鱼 ${state.fish}条、蔬菜 ${state.vegetables}份、水果 ${state.fruits}份、珍珠 ${state.pearls}颗`,price:`+${state.fishValue+state.vegetables*6+state.fruits*10+state.shells*8+state.pearls*50} 金币`},
+    {id:'seed',name:'蔬菜种子 ×3',desc:'种下后浇水，成熟可收获两份蔬菜。',price:'8 金币'},
+    {id:'fruitSeed',name:'热带水果种子 ×2',desc:'生长较慢，但售价更高。',price:'18 金币'},
+    {id:'water',name:'淡水补给 ×3',desc:'浇灌农田，加快作物生长。',price:'6 金币'},
+    {id:'rod',name:`升级鱼竿 Lv.${state.rodLevel} → Lv.${state.rodLevel+1}`,desc:'提升钓鱼成功率，最高 Lv.5。',price:`${state.rodLevel*30} 金币`,disabled:state.rodLevel>=5},
+    {id:'speed',name:'小船引擎升级',desc:'航速提高，往返外海更快。',price:'45 金币',disabled:state.boatSpeed>=3},
+    {id:'anchor',name:'防风锚',desc:'台风中固定小船，避免被风浪卷走。',price:'35 金币',disabled:state.boatAnchor},
+    {id:'guard',name:'农田防潮栏',desc:'防止高潮淹坏低洼农田。',price:'32 金币',disabled:state.farmGuard},
+    {id:'cover',name:'防灾作物棚',desc:'台风来临时保护全部作物。',price:'42 金币',disabled:state.farmCover},
+    {id:'house',name:'加固木屋',desc:'减少台风损坏，避免家园耐久归零。',price:'48 金币',disabled:state.houseReinforced},
+    {id:'boat',name:'购买替代小船',desc:'船只被台风卷走后重新出海。',price:'70 金币',disabled:state.hasBoat},
+  ];
+  $('goods').replaceChildren(...rows.map(row=>{const b=document.createElement('button');b.className='good';b.disabled=!!row.disabled;b.innerHTML=`<b></b><small></small><em></em>`;b.children[0].textContent=row.name;b.children[1].textContent=row.desc;b.children[2].textContent=row.price;if(row.disabled)b.style.opacity='.45';b.addEventListener('click',()=>purchase(row.id));return b;}));
+}
+function purchase(id){
+  if(id==='sell'){
+    const value=state.fishValue+state.vegetables*6+state.fruits*10+state.shells*8+state.pearls*50;
+    if(!value){toast('背包里还没有可售物品');return;}
+    state.gold+=value;state.fish=0;state.fishValue=0;state.vegetables=0;state.fruits=0;state.shells=0;state.pearls=0;toast(`出售成功，获得 ${value} 金币`);
+  }else{
+    const costs={seed:8,fruitSeed:18,water:6,rod:state.rodLevel*30,speed:45,anchor:35,guard:32,cover:42,house:48,boat:70};
+    if(state.gold<costs[id]){toast(`还差 ${costs[id]-state.gold} 金币`);return;}
+    if((id==='rod'&&state.rodLevel>=5)||(id==='speed'&&state.boatSpeed>=3)||({anchor:state.boatAnchor,guard:state.farmGuard,cover:state.farmCover,house:state.houseReinforced,boat:state.hasBoat}[id])){toast('这项已经拥有或达到上限');return;}
+    state.gold-=costs[id];
+    if(id==='seed')state.seeds+=3;else if(id==='fruitSeed')state.fruitSeeds+=2;else if(id==='water')state.water+=3;
+    else if(id==='rod')state.rodLevel++;else if(id==='speed')state.boatSpeed++;
+    else if(id==='anchor')state.boatAnchor=true;else if(id==='guard')state.farmGuard=true;else if(id==='cover')state.farmCover=true;else if(id==='house')state.houseReinforced=true;else if(id==='boat'){state.hasBoat=true;boat.visible=true;boat.position.set(12.5,0,2.8);}
+    toast('购买成功，物资已放进背包');
+  }
+  goods();save();refreshHud();
+}
+$('shop-open').addEventListener('click',()=>{goods();$('shop').classList.add('open');});
+$('close-shop').addEventListener('click',()=>$('shop').classList.remove('open'));
+$('shop').addEventListener('click',e=>{if(e.target===$('shop'))$('shop').classList.remove('open');});
+addEventListener('keydown',e=>{const key=e.key.toLowerCase();if(['w','a','s','d','arrowup','arrowleft','arrowdown','arrowright',' ','e'].includes(key))e.preventDefault();keys.add(key);if((key===' '||key==='e')&&!e.repeat&&!$('shop').classList.contains('open'))performAction();if(key==='escape')$('shop').classList.remove('open');});
+addEventListener('keyup',e=>keys.delete(e.key.toLowerCase()));
+for(const b of document.querySelectorAll('.dir')){
+  const dir=b.dataset.dir;
+  const down=e=>{e.preventDefault();pad.add(dir);b.setPointerCapture?.(e.pointerId);};
+  const up=e=>{e.preventDefault();pad.delete(dir);};
+  b.addEventListener('pointerdown',down);b.addEventListener('pointerup',up);b.addEventListener('pointercancel',up);b.addEventListener('lostpointercapture',up);
+}
+function refreshHud(){
+  const day=Math.floor(state.gameTime/DAY_LENGTH)+1,clock=state.gameTime%DAY_LENGTH/DAY_LENGTH;
+  const hour=Math.floor(clock*24),minute=Math.floor(clock*1440)%60;
+  $('day').textContent=day;$('clock').textContent=`${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}　${hour>=6&&hour<18?'☀️':'🌙'}`;
+  $('wallet').textContent=`金币 ${state.gold}　木材 ${state.wood||0}　淡水 ${state.water}`;
+  $('inventory').textContent=`鱼 ${state.fish} (${state.fishValue}金)　蔬菜 ${state.vegetables}　水果 ${state.fruits}　海贝 ${state.shells}　珍珠 ${state.pearls}`;
+  $('gear').textContent=`鱼竿 Lv.${state.rodLevel}　船引擎 Lv.${state.boatSpeed}　锚 ${state.boatAnchor?'✓':'×'}　农田 ${state.farmGuard?'防潮':'无栏'}`;
+  const tide=tideValue(state.gameTime);
+  const stormAt=(state.stormDay-1)*DAY_LENGTH+DAY_LENGTH*.48;
+  $('weather').textContent=stormActive?'天气：台风登陆！':state.gameTime>=stormAt-24&&state.gameTime<stormAt?'天气：台风预警！':`天气：晴　·　潮位：${tide>.72?'涨潮':tide<.28?'退潮':'平潮'}`;
+  $('seed-toggle').textContent=`播种：${state.selectedSeed==='veg'?'蔬菜':'水果'}`;
+}
+renderModes();updateAction();refreshHud();
+
+// --- 昼夜、潮汐和台风 ---
+let previousTime=performance.now(),lastHud=0,lastSave=0,stormActive=false,stormWarned=false;
+let worldTime=state.gameTime;
+function tideValue(t){return .5+.5*Math.sin(t*Math.PI*2/36-Math.PI/2);}
+function handleStorm(dayTime){
+  const eventAt=(state.stormDay-1)*DAY_LENGTH+DAY_LENGTH*.48;
+  const warningAt=eventAt-24;
+  if(worldTime>=warningAt&&worldTime<eventAt&&!stormWarned){stormWarned=true;toast(`台风预警！第 ${state.stormDay} 天即将登陆，准备锚船、护田、加固木屋`);}
+  if(worldTime>=eventAt&&worldTime<eventAt+20&&state.stormHandled!==state.stormDay){
+    state.stormHandled=state.stormDay;stormActive=true;stormWarned=false;
+    const losses=[];
+    if(state.hasBoat&&!state.boatAnchor){state.hasBoat=false;boat.visible=false;losses.push('小船被风浪卷走');}
+    if(!state.farmCover){for(let i=0;i<state.crops.length;i++){state.crops[i]={type:'',growth:0,waterUntil:0};cropVisual(i);}losses.push('作物全部损毁');}
+    if(!state.houseReinforced){state.houseHp=Math.max(0,state.houseHp-65);if(state.houseHp===0)losses.push('木屋严重损毁');}
+    toast(losses.length?`台风过境：${losses.join('、')}。去商店补救。`:'防灾措施生效，小岛平安度过台风！');save();
+  }
+  if(worldTime>=eventAt+20&&state.stormHandled===state.stormDay){stormActive=false;state.stormDay+=3+Math.floor(Math.random()*2);save();}
+}
+function animateEnvironment(dt){
+  const phase=(state.gameTime%DAY_LENGTH)/DAY_LENGTH;
+  const daylight=clamp((Math.sin((phase-.25)*Math.PI*2)+.15)*1.15,0,1);
+  const nightColor=new THREE.Color(0x091c32),dawnColor=new THREE.Color(0xeca977),dayColor=new THREE.Color(0x87c4ca);
+  const sky=new THREE.Color().copy(nightColor).lerp(dawnColor,clamp(1-Math.abs(daylight-.18)*4,0,.8)).lerp(dayColor,daylight);
+  if(stormActive)sky.lerp(new THREE.Color(0x465961),.62);
+  scene.background.copy(sky);scene.fog.color.copy(sky);hemi.intensity=.35+daylight*1.45;sun.intensity=.12+daylight*2.9;sun.position.set(Math.cos(phase*Math.PI*2)*28,6+daylight*24,Math.sin(phase*Math.PI*2)*26);
+  const sunAngle=(phase-.25)*Math.PI*2;
+  sunBall.position.set(Math.cos(sunAngle)*48,Math.max(-8,Math.sin(sunAngle)*32),-35);sunBall.visible=phase>.22&&phase<.78;
+  moonBall.position.set(-sunBall.position.x,Math.max(-3,-sunBall.position.y),-33);moonBall.visible=!sunBall.visible;
+  const tide=tideValue(state.gameTime);water.position.y=-.24+tide*.62;seaMat.uniforms.uTime.value=state.gameTime;seaMat.uniforms.uDay.value=daylight;seaMat.uniforms.uStorm.value=stormActive?1:0;
+  const high=tide>.88;
+  if(high&&!lastTideHigh&&!state.farmGuard){for(let i=3;i<6;i++){const c=state.crops[i];if(c.type){c.growth=Math.max(0,c.growth-.15);if(c.growth===0){c.type='';cropVisual(i);}toast('高潮淹到低洼田，防潮栏可保护作物');}}save();}
+  lastTideHigh=high;
+  rain.visible=stormActive;
+  if(stormActive){const p=rain.geometry.attributes.position.array;for(let i=0;i<rainCount;i++){const j=i*6;p[j+1]-=dt*26;if(p[j+1]<0){p[j+1]=22+Math.random()*6;p[j]=(Math.random()-.5)*60;p[j+2]=(Math.random()-.5)*60;p[j+3]=p[j]-.25;p[j+4]=p[j+1]-.8;p[j+5]=p[j+2];}}rain.geometry.attributes.position.needsUpdate=true;}
+  seaMat.uniforms.uDepth.value=tide;
+}
+function moveActor(dt){
+  const dirs={up:keys.has('w')||keys.has('arrowup')||pad.has('up'),down:keys.has('s')||keys.has('arrowdown')||pad.has('down'),left:keys.has('a')||keys.has('arrowleft')||pad.has('left'),right:keys.has('d')||keys.has('arrowright')||pad.has('right')};
+  let x=(dirs.right?1:0)-(dirs.left?1:0),z=(dirs.down?1:0)-(dirs.up?1:0);const n=Math.hypot(x,z)||1;x/=n;z/=n;
+  const target=actor(),speed=riding?5.8*state.boatSpeed:4.3;
+  if(x||z){target.position.x+=x*speed*dt;target.position.z+=z*speed*dt;target.rotation.y=Math.atan2(x,z);}
+  if(!riding){const r=Math.hypot(player.position.x,player.position.z);if(r>19){player.position.x*=19/r;player.position.z*=19/r;}player.position.y=diving?-.2+Math.sin(state.gameTime*2)*.12:0;}
+  else {boat.position.y=Math.sin(state.gameTime*1.7)*.08;boat.userData.anchored=boat.userData.anchored&&!x&&!z;}
+  if(diving){oxygen=Math.max(0,oxygen-dt*5);if(oxygen===0){diving=false;player.position.set(boat.position.x,0,boat.position.z);toast('氧气不足，自动上浮');setMode('walk');}}
+  const follow=actor().position;camera.position.lerp(new THREE.Vector3(follow.x+17,follow.y+19,follow.z+21),1-Math.exp(-dt*3));camera.lookAt(follow.x,1.2,follow.z);
+}
+function updateCropGrowth(dt){
+  for(let i=0;i<state.crops.length;i++){const c=state.crops[i];if(!c.type||c.growth>=1)continue;const watered=c.waterUntil>state.gameTime;c.growth=Math.min(1,c.growth+dt*(watered?.012:.003));if(c.growth===1)toast(c.type==='fruit'?'水果成熟了，回农田收获':'蔬菜成熟了，回农田收获');if(cropMeshes[i])cropMeshes[i].scale.setScalar(.5+c.growth*.5);}
+}
+function update(dt,now){
+  state.gameTime+=dt;worldTime=state.gameTime;const day=Math.floor(worldTime/DAY_LENGTH)+1;
+  const eventAt=(state.stormDay-1)*DAY_LENGTH+DAY_LENGTH*.48;
+  stormActive=state.stormHandled===state.stormDay&&worldTime<eventAt+20;
+  if(day>state.stormDay&&state.stormHandled<state.stormDay){handleStorm(0);}
+  handleStorm((worldTime%DAY_LENGTH)/DAY_LENGTH);
+  animateEnvironment(dt);moveActor(dt);updateCropGrowth(dt);
+  if(now-lastHud>350){refreshHud();lastHud=now;}
+  if(now-lastSave>4000){save();lastSave=now;}
+}
+function frame(now){const dt=Math.min(.06,(now-previousTime)/1000);previousTime=now;update(dt,now);renderer.render(scene,camera);requestAnimationFrame(frame);}
+function resize(){renderer.setPixelRatio(Math.min(devicePixelRatio||1,1.6));renderer.setSize(innerWidth,innerHeight,false);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();}
+addEventListener('resize',resize);requestAnimationFrame(frame);
+</script>
+</body>
+</html>

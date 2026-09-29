@@ -1,0 +1,54 @@
+{
+  "schema": "game-room.prop-manifest.v1",
+  "roomId": "tropical-island",
+  "generation": {
+    "provider": "meshy",
+    "apiModel": "meshy-5",
+    "pricingSource": "https://docs.meshy.ai/en/api/pricing",
+    "pricingVerifiedAt": "",
+    "creditsPerTexturedTask": 15,
+    "hardCreditCeiling": 0,
+    "maxChargedAttemptsPerAsset": 2
+  },
+  "assets": [
+    {
+      "id": "beach-hut",
+      "function": "Hero home and scale anchor",
+      "description": "Weathered timber-and-plaster tropical cottage with a tiled roof and usable porch.",
+      "class": "hero",
+      "dimensionsMeters": [5.5, 5.2, 4.8],
+      "attachmentFace": "floor",
+      "semanticFront": "positive-z",
+      "intendedInstances": 1,
+      "targetPolycount": 12000,
+      "rejectionCriteria": ["No complete back surface", "Floating porch or roof pieces", "Door and windows are unreadable from the game camera"],
+      "image": {"prompt": "Isolated stylized-realistic tropical beach cottage with complete construction and back surface, weathered plaster, timber porch and tile roof; neutral studio background; no scene, text or watermark.", "generator": "OpenAI image generation", "source": "", "approved": false, "approvedBy": ""}
+    },
+    {
+      "id": "coconut-palm",
+      "function": "Reusable canopy and beach-edge rhythm",
+      "description": "Grounded coconut palm with segmented trunk and readable layered fronds.",
+      "class": "reusable",
+      "dimensionsMeters": [4.8, 7.2, 4.8],
+      "attachmentFace": "floor",
+      "semanticFront": "positive-z",
+      "intendedInstances": 8,
+      "targetPolycount": 3500,
+      "rejectionCriteria": ["Fronds fuse into a solid disk", "Trunk has no grounded base", "Silhouette collapses at mobile scale"],
+      "image": {"prompt": "Isolated stylized-realistic coconut palm with full uncropped silhouette and roots, segmented trunk, layered wind-shaped fronds; neutral studio background; no scene, text or watermark.", "generator": "OpenAI image generation", "source": "", "approved": false, "approvedBy": ""}
+    },
+    {
+      "id": "shoreline-cluster",
+      "function": "Reusable beach-to-water transition dressing",
+      "description": "One grounded cluster of rounded wet rocks, compact coral and sea grass.",
+      "class": "reusable",
+      "dimensionsMeters": [2.2, 1.3, 1.8],
+      "attachmentFace": "floor",
+      "semanticFront": "positive-z",
+      "intendedInstances": 10,
+      "targetPolycount": 4200,
+      "rejectionCriteria": ["Separate pieces float without a shared footprint", "Coral noise blocks interaction markers", "The silhouette collapses at mobile scale"],
+      "image": {"prompt": "One isolated stylized-realistic tropical shoreline cluster: two rounded wet rocks with compact coral and sea grass sharing one grounded footprint; neutral studio background; no ocean scene, text or watermark.", "generator": "OpenAI image generation", "source": "", "approved": false, "approvedBy": ""}
+    }
+  ]
+}

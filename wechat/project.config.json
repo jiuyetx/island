@@ -1,0 +1,7 @@
+{
+  "appid": "wx721e5443b52c3074",
+  "compileType": "game",
+  "projectname": "island-three",
+  "miniprogramRoot": "./",
+  "setting": { "es6": true, "minified": true, "urlCheck": false }
+}

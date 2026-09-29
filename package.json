@@ -1,0 +1,16 @@
+{
+  "name": "island-three-mini-game",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "preview": "python3 -m http.server 4173 --directory dist/web",
+    "test": "node tests/economy.test.mjs && node tests/freshwater.test.mjs && node tests/fishing.test.mjs && node tests/assets.test.mjs && node tests/bush-layout.test.mjs && node tests/day-loop.test.mjs && node tests/rest.test.mjs && node tests/navigation.test.mjs && node tests/platform.test.mjs && node tests/sea-ecology.test.mjs && node tests/storm.test.mjs"
+  },
+  "dependencies": {
+    "three": "0.180.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.9"
+  }
+}

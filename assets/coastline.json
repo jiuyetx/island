@@ -1,0 +1,16 @@
+{
+  "shoreRadius": 14.7,
+  "segments": 128,
+  "radialHarmonics": [
+    { "frequency": 3, "amplitude": 0.095, "phase": 0.7 },
+    { "frequency": 5, "amplitude": 0.062, "phase": 2.1 },
+    { "frequency": 7, "amplitude": 0.031, "phase": 3.3 },
+    { "frequency": 9, "amplitude": 0.016, "phase": 0.4 },
+    { "frequency": 13, "amplitude": 0.009, "phase": 1.8 }
+  ],
+  "shellBands": {
+    "grass": [[0.0, 2.05], [7.6, 2.04], [9.25, 1.93], [10.5, 1.72]],
+    "sand": [[10.5, 1.72], [11.2, 1.51], [12.0, 1.16], [12.8, 0.77], [13.55, 0.42], [14.15, 0.17], [14.7, 0.05]],
+    "underwater": [[14.7, 0.05], [15.25, -0.16], [16.0, -0.52], [16.8, -1.05], [17.7, -1.72], [18.7, -2.44], [19.4, -3.1]]
+  }
+}

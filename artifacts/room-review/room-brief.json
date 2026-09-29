@@ -1,0 +1,16 @@
+{
+  "schema": "game-room.room-brief.v1",
+  "roomId": "tropical-island",
+  "family": "gameplay-room",
+  "purpose": "A readable tropical-island simulation space for gathering resources and building a garden, hut, and dock.",
+  "runtimeSurface": "Three.js WebGL in a landscape WeChat Mini Game, with browser preview.",
+  "boundsMeters": [100, 20, 100],
+  "hero": {"id": "beach-hut", "role": "The inhabited focal point and scale anchor.", "reservedBoundsMeters": [8, 7, 8]},
+  "symmetry": {"mode": "none", "order": 1, "appliesTo": [], "exceptions": ["The shoreline and vegetation use controlled natural asymmetry."]},
+  "circulation": {"description": "Keep a 1.2 m clear loop between the hero hut, resource pickups, and three build plots; dense dressing stays outside interaction silhouettes.", "minimumClearanceMeters": 1.2},
+  "productionCamera": {"viewport": [1280, 720], "location": [18, 20, -18], "target": [0, 1, 0], "verticalFovDegrees": 35},
+  "performanceBudget": {"maxSceneTriangles": 120000, "maxVLowBytes": 2097152, "maxHighTextureBytes": 4194304},
+  "creditBudget": {"maximumCredits": 0, "approvalRequired": true},
+  "environment": {"type": "none", "identity": "", "source": "", "assignmentKey": ""},
+  "artifacts": {"floorPlan": "", "reflectedCeilingPlan": "", "planMetadata": "plan-metadata.json", "wallElevations": [], "visualTarget": "images/visual-target.png", "openingContactSheet": ""}
+}
