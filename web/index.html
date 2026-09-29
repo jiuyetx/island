@@ -30,6 +30,8 @@
     .google-profile-copy strong, .google-profile-copy span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .google-profile-copy span { margin-top: 5px; color: #bcd7d3; font-size: 12px; }
     #google-logout { width: 100%; min-height: 44px; border: 1px solid #5ea99d; border-radius: 12px; color: #eafff9; background: #236b65; font-weight: 700; cursor: pointer; }
+    .google-auth-legal { display: flex; justify-content: center; gap: 14px; margin-top: 14px; font-size: 12px; }
+    .google-auth-legal a { color: #9fd8cf; }
     @media (max-width: 640px) { #google-auth-root { top: 9px; right: 9px; } #google-account-button { min-height: 40px; padding: 5px 10px; } #google-account-button img, .google-avatar-fallback { width: 28px; height: 28px; } }
   </style>
 </head>
@@ -48,6 +50,7 @@
         </div>
         <p id="google-auth-status" role="status">正在准备 Google 登录…</p>
         <button id="google-logout" type="button" hidden>退出登录</button>
+        <nav class="google-auth-legal" aria-label="账号政策"><a href="privacy.html" target="_blank" rel="noopener">隐私政策</a><a href="terms.html" target="_blank" rel="noopener">服务条款</a></nav>
       </div>
     </dialog>
   </div>

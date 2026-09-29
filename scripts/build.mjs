@@ -27,6 +27,8 @@ const googleClientId = escapeHtmlAttribute(process.env.GOOGLE_CLIENT_ID || '');
 await writeFile('dist/web/index.html', webHtml
   .replace('__GOOGLE_CLIENT_ID__', googleClientId)
   .replace('src="main.js"', `src="main.js?v=${bundleHash}"`));
+await cp('web/privacy.html', 'dist/web/privacy.html');
+await cp('web/terms.html', 'dist/web/terms.html');
 for (const directory of ['dist/web/assets/generated', 'dist/wechat/assets/generated']) {
   await mkdir(directory, { recursive: true });
   await cp('assets/generated/tropical-atlas.webp', `${directory}/tropical-atlas.webp`);
