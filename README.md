@@ -24,6 +24,16 @@ npm run preview
 
 Cloudflare Pages 连接 GitHub 仓库后，推送到 `main` 会自动触发生产部署。
 
+### Google 登录
+
+构建时通过 `GOOGLE_CLIENT_ID` 注入 Google Identity Services 的 Web 客户端 ID：
+
+```bash
+GOOGLE_CLIENT_ID="your-client-id.apps.googleusercontent.com" npm run build
+```
+
+Cloudflare Pages 中应在生产环境变量里设置同名变量，并在 Google Cloud OAuth 客户端中把 `https://island.dailysnake.com` 配置为授权 JavaScript 来源。登录仅用于身份识别，游戏存档仍保存在浏览器本机。
+
 ## 微信开发者工具
 
 1. 先运行 `npm run build`。

@@ -20,7 +20,13 @@ await build({ ...shared, sourcemap: false, outfile: 'dist/wechat/game.js', forma
 const webBundle = await readFile('dist/web/main.js');
 const bundleHash = createHash('sha256').update(webBundle).digest('hex').slice(0, 12);
 const webHtml = await readFile('web/index.html', 'utf8');
-await writeFile('dist/web/index.html', webHtml.replace('src="main.js"', `src="main.js?v=${bundleHash}"`));
+const escapeHtmlAttribute = (value) => String(value).replace(/[&"'<>]/g, (character) => ({
+  '&': '&amp;', '"': '&quot;', "'": '&#39;', '<': '&lt;', '>': '&gt;',
+})[character]);
+const googleClientId = escapeHtmlAttribute(process.env.GOOGLE_CLIENT_ID || '');
+await writeFile('dist/web/index.html', webHtml
+  .replace('__GOOGLE_CLIENT_ID__', googleClientId)
+  .replace('src="main.js"', `src="main.js?v=${bundleHash}"`));
 for (const directory of ['dist/web/assets/generated', 'dist/wechat/assets/generated']) {
   await mkdir(directory, { recursive: true });
   await cp('assets/generated/tropical-atlas.webp', `${directory}/tropical-atlas.webp`);

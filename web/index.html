@@ -3,13 +3,54 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+  <meta name="google-client-id" content="__GOOGLE_CLIENT_ID__">
   <title>潮汐小岛</title>
   <style>
     * { box-sizing: border-box; }
     html, body, #game { width: 100%; height: 100%; margin: 0; overflow: hidden; touch-action: none; }
     body { background: #075c78; font-family: system-ui, sans-serif; }
     #game { display: block; }
+    #google-auth-root { position: fixed; z-index: 20; top: max(14px, env(safe-area-inset-top)); right: max(14px, env(safe-area-inset-right)); pointer-events: auto; }
+    #google-account-button { min-height: 44px; max-width: min(260px, calc(100vw - 28px)); display: flex; align-items: center; gap: 9px; padding: 6px 13px; border: 1px solid rgba(241,221,145,.72); border-radius: 14px; background: rgba(2,39,51,.9); color: #fff8d7; font: 700 14px/1 system-ui,sans-serif; box-shadow: 0 6px 22px rgba(0,0,0,.3); cursor: pointer; backdrop-filter: blur(8px); touch-action: manipulation; }
+    #google-account-button img, .google-avatar-fallback { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; object-fit: cover; background: #fff; color: #4285f4; font-weight: 900; }
+    .google-g { width: 25px; height: 25px; display: grid; place-items: center; border-radius: 50%; background: #fff; color: #4285f4; font: 900 16px/1 Arial,sans-serif; }
+    #google-auth-dialog { width: min(390px, calc(100vw - 28px)); border: 1px solid rgba(241,221,145,.72); border-radius: 20px; padding: 0; color: #eefbf3; background: rgba(2,39,51,.98); box-shadow: 0 22px 70px rgba(0,0,0,.55); touch-action: manipulation; }
+    #google-auth-dialog::backdrop { background: rgba(0,26,37,.62); backdrop-filter: blur(4px); }
+    .google-auth-card { padding: 24px; }
+    .google-auth-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
+    .google-auth-head h2 { margin: 0; color: #fff4c7; font-size: 22px; }
+    #google-auth-close { width: 38px; height: 38px; border: 0; border-radius: 11px; background: #a97931; color: white; font-size: 22px; cursor: pointer; }
+    .google-auth-subtitle, #google-auth-status { color: #bbd8d3; font-size: 13px; line-height: 1.55; }
+    #google-signin-button { min-height: 44px; margin: 20px 0 14px; display: flex; justify-content: center; }
+    #google-auth-status[data-tone="error"] { color: #ffb5aa; }
+    #google-auth-status[data-tone="success"] { color: #8ce3bd; }
+    #google-profile { display: grid; grid-template-columns: 48px minmax(0,1fr); gap: 12px; align-items: center; margin: 18px 0; padding: 14px; border-radius: 14px; background: rgba(31,108,99,.45); }
+    #google-profile [data-profile-avatar] img, #google-profile .google-avatar-fallback { width: 48px; height: 48px; }
+    .google-profile-copy { min-width: 0; }
+    .google-profile-copy strong, .google-profile-copy span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .google-profile-copy span { margin-top: 5px; color: #bcd7d3; font-size: 12px; }
+    #google-logout { width: 100%; min-height: 44px; border: 1px solid #5ea99d; border-radius: 12px; color: #eafff9; background: #236b65; font-weight: 700; cursor: pointer; }
+    @media (max-width: 640px) { #google-auth-root { top: 9px; right: 9px; } #google-account-button { min-height: 40px; padding: 5px 10px; } #google-account-button img, .google-avatar-fallback { width: 28px; height: 28px; } }
   </style>
 </head>
-<body><canvas id="game"></canvas><script src="main.js"></script></body>
+<body>
+  <canvas id="game"></canvas>
+  <div id="google-auth-root" data-signed-in="false">
+    <button id="google-account-button" type="button" aria-haspopup="dialog"><span class="google-g">G</span><span>Google 登录</span></button>
+    <dialog id="google-auth-dialog" aria-labelledby="google-auth-title">
+      <div class="google-auth-card">
+        <div class="google-auth-head"><h2 id="google-auth-title">岛民账号</h2><button id="google-auth-close" type="button" aria-label="关闭">×</button></div>
+        <p class="google-auth-subtitle">使用 Google 账号确认身份。第一版不会上传或合并游戏存档。</p>
+        <div id="google-signin-button"></div>
+        <div id="google-profile" hidden>
+          <div data-profile-avatar></div>
+          <div class="google-profile-copy"><strong data-profile-name></strong><span data-profile-email></span></div>
+        </div>
+        <p id="google-auth-status" role="status">正在准备 Google 登录…</p>
+        <button id="google-logout" type="button" hidden>退出登录</button>
+      </div>
+    </dialog>
+  </div>
+  <script src="main.js"></script>
+</body>
 </html>

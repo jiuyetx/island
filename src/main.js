@@ -16,6 +16,7 @@ import { BUILDINGS, CROPS, SEAFOOD, SHOP, TREE_MATURE_MINUTES, build, buyItem, c
 import { stormStatus, summarizeStormReport, updateStorm } from './storm.js';
 import { INSTALLABLE_STOCK, drawIcon, drawInventoryPanel, getInventoryRows } from './inventoryUi.js';
 import { FRESHWATER_SITE, dailyWaterYield, drinkWater, rainForDay, refillCanteen, staminaCeiling } from './freshwater.js';
+import { initGoogleAuth } from './googleAuth.js';
 
 const coastlineHarmonics = COASTLINE.radialHarmonics.map(({ frequency, amplitude, phase }) =>
   `${amplitude}*sin(ang*${Number(frequency).toFixed(1)}+${phase})`).join('+');
@@ -55,6 +56,7 @@ const hutRoofs = [];
 let heroBoat = null;
 const forceCutaway = typeof location !== 'undefined' && /cutaway/.test(location.search);
 const state = normalizeState(loadState());
+initGoogleAuth();
 let screen = viewport();
 let viewSize = 38;
 let azimuth = -0.72;
