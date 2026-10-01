@@ -1,0 +1,7 @@
+{
+  "schema": "game-room.milestone-reviews.v1",
+  "roomId": "island-plant-refresh",
+  "function": {"status": "approved", "approvedBy": "user", "approvedAt": "2026-10-01", "evidence": ["plant-contract.md", "renders/plant-family.png"], "strangestElement": "Former foliage was a sparse detached comb silhouette", "notes": "User replied 可以 to the presented plant preview and request to integrate; existing plant roles and layout retained"},
+  "form": {"status": "approved", "approvedBy": "user", "approvedAt": "2026-10-01", "evidence": ["plant-form-review.blend", "renders/plant-family.png", "renders/production-angle.png", "model-metrics.json"], "strangestElement": "Broad fronds must retain recognizable feather edges without becoming rigid stars", "notes": "User explicitly approved rendered geometry on 2026-10-01; leaf veins reduced from five to four sides solely to meet the declared budget"},
+  "runtime": {"status": "pending", "approvedBy": "", "approvedAt": "", "evidence": ["runtime/island-plants.png", "runtime/tree-interaction.png", "runtime/plant-export.json", "integration-report.md"], "strangestElement": "New solid leaf silhouettes must remain readable at the gameplay camera distance", "notes": "Local integration and browser inspection completed; no console errors. Automated asset, palette, grounding, preservation, splice and material checks passed. Web/WeChat builds passed. Human runtime approval and phone frame-rate acceptance remain pending; not deployed."}
+}

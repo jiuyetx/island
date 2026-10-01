@@ -7,6 +7,7 @@ small (512px) so the next web build can transcode it to KTX2 without changing UV
 import math
 import os
 import json
+import sys
 import bpy
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -351,12 +352,20 @@ def _radial_shell(name, bands, tile, cap=False):
         # Broad coves and headlands first, with only a little fine shoreline noise.
         distortion = sum(term['amplitude'] * math.sin(angle * term['frequency'] + term['phase'])
                          for term in COASTLINE['radialHarmonics'])
+        features = 0
+        for feature in COASTLINE['shoreFeatures']:
+            delta = math.atan2(math.sin(angle - feature['angle']), math.cos(angle - feature['angle']))
+            features += feature['offset'] * math.exp(-.5 * (delta / feature['width']) ** 2)
+        # Localized coves do not pinch the clear playable core. Inland grass has
+        # its own lobes, giving the sand uneven width rather than a uniform ring.
+        feature_weight = max(0, min(1, (radius - 8.5) / 6.2))
         # The outer shore must remain the exact runtime/shader contour. Interior
         # bands receive a small cross-slope drift so the beach does not read as
         # concentric, parallel rings while every shared material seam still joins.
         cross_slope = (radius - COASTLINE['shoreRadius']) * (
-            .035 * math.sin(angle * 4 + .45) + .018 * math.sin(angle * 8 - 1.1))
-        return radius * (1 + distortion) + cross_slope
+            .15 * math.sin(angle * 2 + .45) + .09 * math.sin(angle * 5 - 1.1)
+            + .05 * math.sin(angle * 11 + .8))
+        return radius * (1 + distortion) + cross_slope + features * feature_weight
 
     verts, uvs = [], []
     shell_bands = [band for band in bands if not cap or band[0] > 0]
@@ -370,8 +379,11 @@ def _radial_shell(name, bands, tile, cap=False):
             # Gentle undulation breaks the cake-tier profile while preserving a
             # broad, clear centre for gameplay placement. It is a pure function
             # of the shared band coordinate, so grass, sand and seabed meet.
+            beach_weight = max(0, 1 - abs(radius - 12.0) / 2.7)
+            dune = beach_weight * (.17 * math.sin(angle * 5 + radius * 1.7)
+                                  + .09 * math.sin(angle * 13 - radius * 2.4))
             verts.append((math.cos(angle) * rr, math.sin(angle) * rr,
-                          height + .065 * math.sin(angle * 4 + radius) + .028 * math.sin(angle * 7 - radius)))
+                          height + .065 * math.sin(angle * 4 + radius) + .028 * math.sin(angle * 7 - radius) + dune))
             # Planar island-scale mapping keeps grains continuous across the
             # grass, sand and underwater material boundaries.
             uvs.append(tile_uv(.5 + math.cos(angle) * rr / 38,
@@ -1275,6 +1287,9 @@ boat_nodes = _merge_group(boat_group, 'Boat')
 roots = [root('Island', island_nodes), root('HeroHut', hut_nodes),
          root('Boat', boat_nodes), root('Coral', coral_nodes)]
 export(island_nodes + coral_nodes + hut_nodes + boat_nodes + roots, 'tropical-island.glb')
+if '--island-only' in sys.argv:
+    print('generated island terrain only; vegetation and buildings preserved')
+    sys.exit(0)
 
 # --- vegetation, reef dressing and fish ---
 VEGETATION_KINDS = ('Palm', 'Coral', 'Bush', 'Rock', 'Reef_Staghorn', 'Reef_Fan', 'Reef_Brain',

@@ -1,0 +1,20 @@
+{
+  "schema": "game-room.room-final-report.v1",
+  "roomId": "island-plant-refresh",
+  "scope": "Approved plant-only maintenance, not full-room generation",
+  "gates": {"function": true, "form": true, "runtime": false},
+  "approvalEvidence": "milestone-reviews.json",
+  "fullRoomValidator": {
+    "status": "failed-not-applicable-to-maintenance-scope",
+    "notes": "Requires architectural shell, openings, ceiling/environment coverage and Meshy pricing/provenance. These were not fabricated. Full-room gate is not reported as passed; project-specific plant tests provide separate evidence."
+  },
+  "plantChecks": {"validGeometry": true, "triangleBudgets": true, "rootContact": true, "authoredPalette": true, "sharedWindMaterial": true, "oneMeshPerSource": true, "nineteenOtherSourcesPreserved": true, "idempotentPackReplacement": true, "browserPicking": true},
+  "runtimeChecks": {"automatedTests": "passed", "webBuild": "passed", "wechatBuild": "passed", "browserCapture": "runtime/island-plants.png", "interactionCapture": "runtime/tree-interaction.png", "errors": [], "phonePerformance": "not-tested", "humanRuntimeApproval": "pending"},
+  "postmortem": {
+    "observations": ["Approved models now render at the normal gameplay camera", "Sparse shrubs and established navigation arrangement retained"],
+    "corrections": ["Authored colours bypass the green legacy atlas", "Merged source meshes avoid one draw per leaf/petal", "Binary GLB splice preserves unrelated AO and geometry", "Repeated exports replace payload without accumulating geometry"],
+    "remainingRisks": ["Phone frame-time budget needs real-device acceptance", "Human runtime acceptance pending"]
+  },
+  "deployed": false,
+  "proposedLessons": []
+}

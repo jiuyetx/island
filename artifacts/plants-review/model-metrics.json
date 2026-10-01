@@ -1,0 +1,9 @@
+{
+  "triangleCount": 34512,
+  "trianglesPerPalm": 6554,
+  "trianglesPerShrub": 4950,
+  "objectCount": 348,
+  "exported": false,
+  "reviewOnly": true,
+  "source": "tools/blender_preview_plants.py"
+}

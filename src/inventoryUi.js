@@ -1,4 +1,6 @@
 import { CROPS, SEAFOOD, SHOP, repairQuote } from './economy.js';
+import { DISHES } from './cooking.js';
+import { drawDishIcon } from './cookingUi.js';
 
 const STOCK_NAMES = {
   diveSupply: '潜水耗材', windNet: '防风网', drainage: '排水渠', anchor: '加固锚绳',
@@ -28,6 +30,8 @@ export function inventoryAction(itemId, mode) {
   if (itemId.endsWith('Seed') && CROPS[itemId.slice(0, -4)]) return { label: '前往空田播种', id: `inventory-use:${itemId}` };
   if (itemId === 'wood') return { label: '查看木材抢修选项', id: 'inventory-use:wood' };
   if (itemId === 'diveSupply') return { label: '查看出海与潜水', id: 'inventory-use:diveSupply' };
+  if (itemId === 'food') return { label: '食用储备食物 · 补充饱腹', id: 'inventory-use:food' };
+  if (DISHES[itemId]) return { label: `食用料理 · 饱腹 +${DISHES[itemId].satiety}（上限 100）`, id: `inventory-use:${itemId}` };
   if (CROPS[itemId] || SEAFOOD[itemId]) return { label: '食用 · 补充饱腹（出售请到交易站）', id: `inventory-use:${itemId}` };
   if (itemId === 'legacyFish') return { label: '前往码头售出', id: `inventory-use:${itemId}` };
   return null;
@@ -48,6 +52,11 @@ function circle(ctx, x, y, r, color) {
 }
 
 function itemFromStock(id, quantity, state) {
+  const dish = DISHES[id];
+  if (dish) return { id, name: dish.name, quantity, kind: 'meal', icon: id, level: dish.level,
+    summary: `Lv.${dish.level} · 饱腹 +${dish.satiety}`,
+    detail: `食用补充 ${dish.satiety} 饱腹（上限 100），再休息恢复体力；料理不可出售`,
+    status: `料理 Lv.${dish.level} · 当前拥有 ${quantity} 份` };
   const crop = CROPS[id];
   const seafood = SEAFOOD[id];
   const seedCrop = id.endsWith('Seed') ? CROPS[id.slice(0, -4)] : null;
@@ -71,14 +80,14 @@ function itemFromStock(id, quantity, state) {
       : sellPrice != null ? `可食用补充饱腹，也可到交易站出售 ${sellPrice * quantity} 金（${sellPrice} 金/件）`
       : purchasePrice != null ? `购入参考 ${purchasePrice * quantity} 金（${purchasePrice} 金/件）`
         : id === 'shells' ? '旧建筑建材 · 基础建筑已建成，目前不能消耗或出售'
-        : id === 'food' ? '储备食物 · 可在出海页“准备一餐”中食用' : '当前没有使用方式或售出价',
+        : id === 'food' ? '储备食物 · 点击食用补充饱腹；回家休息后恢复体力' : '当前没有使用方式或售出价',
     status: `当前拥有 ${quantity} 件`,
   };
 }
 
 function equippedRows(state) {
   const gearUse = {
-    boat: '已装备 · 出海捕远洋鱼时自动搭乘', rod: '已装备 · 出海选择鱼类后自动使用',
+    boat: '点击小船或航海页登船 · WASD 自由驾驶，海图选岛靠岸探索', rod: '已装备 · 出海选择鱼类后自动使用',
     shovel: '已装备 · 在农田播种时自动使用', dive: '已装备 · 下潜时自动使用',
     net: '出海页点击“高级渔网”捕珊瑚鱼或银鲹', lamp: '夜间自动照明',
     dock: '走近交易站购买和出售', hut: '回小屋休息和使用仓库',
@@ -135,6 +144,7 @@ export function getInventoryRows(state, mode) {
 }
 
 export function drawIcon(ctx, item, x, y, size) {
+  if (DISHES[item.icon]) { drawDishIcon(ctx, DISHES[item.icon], x, y, size); return; }
   const icon = item.icon;
   const sea = item.kind === 'seafood';
   const crop = item.kind === 'crop' || item.kind === 'seed';

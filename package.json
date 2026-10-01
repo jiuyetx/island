@@ -4,8 +4,9 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
+    "posttest": "node tests/player-guidance.test.mjs",
     "preview": "python3 -m http.server 4173 --directory dist/web",
-    "test": "node tests/economy.test.mjs && node tests/freshwater.test.mjs && node tests/fishing.test.mjs && node tests/google-auth.test.mjs && node tests/assets.test.mjs && node tests/bush-layout.test.mjs && node tests/day-loop.test.mjs && node tests/rest.test.mjs && node tests/navigation.test.mjs && node tests/platform.test.mjs && node tests/sea-ecology.test.mjs && node tests/storm.test.mjs"
+    "test": "node tests/economy.test.mjs && node tests/cooking.test.mjs && node tests/freshwater.test.mjs && node tests/fishing.test.mjs && node tests/google-auth.test.mjs && node tests/assets.test.mjs && node tests/foliage-material.test.mjs && node tests/plant-preservation.test.mjs && node tests/plant-splice.test.mjs && node tests/coastline.test.mjs && node tests/coast-swash.test.mjs && node tests/sand-tracks.test.mjs && node tests/environment.test.mjs && node tests/avatar-motion.test.mjs && node tests/bush-layout.test.mjs && node tests/day-loop.test.mjs && node tests/rest.test.mjs && node tests/hut.test.mjs && node tests/navigation.test.mjs && node tests/platform.test.mjs && node tests/sea-ecology.test.mjs && node tests/sand-crab.test.mjs && node tests/storm.test.mjs && node tests/voyage.test.mjs && node tests/voyage-art.test.mjs"
   },
   "dependencies": {
     "three": "0.180.0"

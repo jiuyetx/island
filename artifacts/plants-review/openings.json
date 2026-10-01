@@ -1,0 +1,6 @@
+{
+  "schema": "game-room.opening-schedule.v1",
+  "roomId": "island-plant-refresh",
+  "primaryArrival": {"openingId": "", "exception": "Plant-form maintenance only; existing house doorway and dock remain unchanged"},
+  "openings": []
+}

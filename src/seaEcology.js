@@ -1,12 +1,9 @@
-import COASTLINE from '../assets/coastline.json' with { type: 'json' };
+import { coastlineRadius } from './coastline.js';
 
 const FISH_SHORE_CLEARANCE = 3.2;
 
 export function shoreRadiusAt(x, z) {
-  const angle = Math.atan2(-z, x);
-  const deformation = COASTLINE.radialHarmonics.reduce((sum, wave) =>
-    sum + wave.amplitude * Math.sin(angle * wave.frequency + wave.phase), 0);
-  return COASTLINE.shoreRadius * (1 + deformation);
+  return coastlineRadius(Math.atan2(-z, x));
 }
 
 // Washed-up supplies belong on dry upper sand, not on the grassy island core.

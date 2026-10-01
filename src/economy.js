@@ -1,4 +1,6 @@
 import { advanceHydration, collectAtDawn, freshWaterSupply, normalizeFreshWater, staminaCeiling } from './freshwater.js';
+import { normalizeVoyage } from './voyage.js';
+import { DISHES, normalizeCooking, prepareDish } from './cooking.js';
 
 const DAY = 1440;
 const whole = (n, fallback = 0) => Number.isFinite(n) ? Math.max(0, Math.floor(n)) : fallback;
@@ -39,11 +41,13 @@ export const SHOP = {
 };
 
 const STOCK = new Set(['sweetPotatoSeed', 'tomatoSeed', 'cornSeed', 'pineappleSeed', 'pumpkinSeed', 'palmSeed', 'diveSupply', 'windNet', 'drainage', 'anchor', 'waterproofCabinet', 'waveBarrier', 'windowReinforcement', 'raisedBed']);
-const BAG_KEYS = new Set([...STOCK, ...Object.keys(CROPS), ...Object.keys(SEAFOOD), 'legacyFish']);
+const BAG_KEYS = new Set([...STOCK, ...Object.keys(CROPS), ...Object.keys(SEAFOOD), ...Object.keys(DISHES), 'legacyFish']);
 const BOATS = { wood: 1, iron: 2, speed: 3 };
 export const TREE_MATURE_MINUTES = 2880;
 export const TREE_SITES = [
-  [1.3, 9.4, 1.05, .1], [-8, 1.2, .86, 1.4], [4.8, -5.5, 1.12, 2.1],
+  // Keep palm3's mature crown away from the hut door and porch approach.
+  // Site coordinates are authoritative; saved growth/health still use its ID.
+  [1.3, 9.4, 1.05, .1], [-8, 1.2, .86, 1.4], [11.8, 0, 1.12, 2.1],
   [7.7, -1.8, .92, .7], [5.9, 4.8, .82, 2.8], [-2.2, 7.1, .76, .3],
   [-5.6, 6.8, .68, 2.1], [2.7, -7.8, .7, 1.1],
   [0, -10, .83, .5], [-9.8, 5.8, .78, 1.8], [9.2, -6.5, .85, 2.4],
@@ -113,7 +117,7 @@ export function freshState(now = Date.now()) {
   return {
     schemaVersion: 2, gameMinutes: 360, clockHours: 6, gameHours: 6, dayId: 1, stamina: 100,
     freshwater: freshWaterSupply(),
-    satiety: 70,
+    satiety: 70, cooking: normalizeCooking(null),
     gold: 80, inventory: { sweetPotatoSeed: 4 }, storage: {}, legacyFishValue: 0,
     fishCount: 0, fishValue: 0, rodLevel: 1, hasNet: false, shovelLevel: 1, diveLevel: 0,
     oxygen: 0, boatTier: 'wood', boatDurability: 100, dockLevel: 1, dockDurability: 100,
@@ -125,6 +129,7 @@ export function freshState(now = Date.now()) {
     shelter: { inside: false, doorOpen: false, exposureMinutes: 0, lastCheckedMinutes: 360 },
     netUsesDay: 0, hasLamp: false, harvestCount: 0,
     discovered: {}, explored: { reef: false },
+    voyage: normalizeVoyage(null),
     trees: freshTrees(),
     plots: Array.from({ length: 4 }, (_, i) => emptyPlot(`plot${i + 1}`)),
     defenses: { plots: Array.from({ length: 4 }, (_, i) => ({ id: `plot${i + 1}`, windNet: false, drainage: false })), anchor: false, waterproofCabinet: false, waveBarrier: false, shutters: false },
@@ -181,6 +186,8 @@ export function normalizeState(value, now = Date.now()) {
   const state = freshState(now);
   if (!value || typeof value !== 'object') return state;
   const current = value.schemaVersion === 2;
+  state.voyage = normalizeVoyage(value.voyage);
+  state.cooking = normalizeCooking(value.cooking);
   state.gold = whole(value.gold, current ? 80 : 10);
   for (const key of ['wood', 'shells', 'food']) state[key] = whole(value[key], state[key]);
   if (whole(value.legacyPeople || value.people) > 1) state.legacyPeople = whole(value.legacyPeople || value.people);
@@ -421,9 +428,16 @@ export function restRecoveryCap(state) {
 
 export function eatMeal(state, preferredItemId = null) {
   if (state.satiety >= 100) return failure('full');
-  const edible = [...Object.keys(CROPS), ...Object.keys(SEAFOOD)];
+  if (preferredItemId === 'food') {
+    if (!(state.food > 0)) return failure('no-food');
+    state.food--;
+    state.satiety = Math.min(100, state.satiety + 35);
+    return { ok: true, itemId: 'food', label: '储备食物', satiety: state.satiety };
+  }
+  const edible = [...Object.keys(DISHES), ...Object.keys(CROPS), ...Object.keys(SEAFOOD)];
   let itemId = preferredItemId;
-  if (!edible.includes(itemId) || !(state.inventory[itemId] > 0)) {
+  if (itemId != null && (!edible.includes(itemId) || !(state.inventory[itemId] > 0))) return failure('no-food');
+  if (itemId == null) {
     itemId = edible.find((id) => state.inventory[id] > 0) || null;
   }
   if (!itemId && state.food > 0) {
@@ -434,9 +448,15 @@ export function eatMeal(state, preferredItemId = null) {
   if (!itemId) return failure('no-food');
   state.inventory[itemId]--;
   if (!state.inventory[itemId]) delete state.inventory[itemId];
-  state.satiety = Math.min(100, state.satiety + (CROPS[itemId] ? 32 : 42));
+  state.satiety = Math.min(100, state.satiety + (DISHES[itemId]?.satiety ?? (CROPS[itemId] ? 32 : 42)));
   fishTotals(state);
-  return { ok: true, itemId, label: CROPS[itemId]?.label || SEAFOOD[itemId]?.label, satiety: state.satiety };
+  return { ok: true, itemId, label: DISHES[itemId] ? `${DISHES[itemId].name} Lv.${DISHES[itemId].level}` : CROPS[itemId]?.label || SEAFOOD[itemId]?.label, satiety: state.satiety };
+}
+
+export function cookMeal(state, recipeId) {
+  const result = prepareDish(state, recipeId);
+  if (result.ok) fishTotals(state);
+  return result;
 }
 
 export function consumeRestNutrition(state, kind) {

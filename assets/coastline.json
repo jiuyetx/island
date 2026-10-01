@@ -1,16 +1,25 @@
 {
   "shoreRadius": 14.7,
-  "segments": 128,
+  "segments": 256,
   "radialHarmonics": [
     { "frequency": 3, "amplitude": 0.095, "phase": 0.7 },
     { "frequency": 5, "amplitude": 0.062, "phase": 2.1 },
     { "frequency": 7, "amplitude": 0.031, "phase": 3.3 },
     { "frequency": 9, "amplitude": 0.016, "phase": 0.4 },
-    { "frequency": 13, "amplitude": 0.009, "phase": 1.8 }
+    { "frequency": 13, "amplitude": 0.009, "phase": 1.8 },
+    { "frequency": 17, "amplitude": 0.012, "phase": 2.6 },
+    { "frequency": 23, "amplitude": 0.007, "phase": 0.9 }
+  ],
+  "shoreFeatures": [
+    { "angle": 0.32, "width": 0.16, "offset": -1.25 },
+    { "angle": 1.35, "width": 0.23, "offset": 0.85 },
+    { "angle": 2.38, "width": 0.20, "offset": -1.35 },
+    { "angle": -1.7, "width": 0.18, "offset": -1.05 },
+    { "angle": -2.75, "width": 0.24, "offset": 0.8 }
   ],
   "shellBands": {
     "grass": [[0.0, 2.05], [7.6, 2.04], [9.25, 1.93], [10.5, 1.72]],
-    "sand": [[10.5, 1.72], [11.2, 1.51], [12.0, 1.16], [12.8, 0.77], [13.55, 0.42], [14.15, 0.17], [14.7, 0.05]],
+    "sand": [[10.5, 1.72], [10.85, 1.64], [11.2, 1.51], [11.6, 1.35], [12.0, 1.16], [12.4, 0.96], [12.8, 0.77], [13.2, 0.57], [13.55, 0.42], [13.85, 0.28], [14.15, 0.17], [14.4, 0.10], [14.7, 0.05]],
     "underwater": [[14.7, 0.05], [15.25, -0.16], [16.0, -0.52], [16.8, -1.05], [17.7, -1.72], [18.7, -2.44], [19.4, -3.1]]
   }
 }

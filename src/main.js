@@ -1,14 +1,27 @@
 import './polyfills.js';
 import * as THREE from 'three';
-import COASTLINE from '../assets/coastline.json';
+import { coastlineRadius, coastlineBandRadius, coastlineShaderRadius, islandCoastlineShaderRadius } from './coastline.js';
+import { createBeachMaterial } from './beachMaterial.js';
+import { COAST_SWASH_GLSL } from './coastSwash.js';
 import { groundPlacements } from './terrain.js';
 import { createRoamer, offshorePlacements, shoreRadiusAt, stepRoamer, upperBeachPoint } from './seaEcology.js';
 import { sparseBushPlacements } from './bushLayout.js';
+import { createFoliageMaterial, applyFoliageAtlas } from './foliageMaterial.js';
 import { planWalkRoute } from './navigation.js';
 import { DOCK_APPROACH, DOCK_DECK_OBSTACLE, TRADE_SIGN_POSITION } from './dockNavigation.js';
-import { planRest } from './rest.js';
-import { advanceFishingSession, createFishingSession, fishingCue, FISHING_FORCE_LABELS, hookFish, setFishingForce } from './fishing.js';
+import { bedRestPlan, restProgress, restPreview, restNutritionCost } from './rest.js';
+import { nextPlayerAction } from './playerGuidance.js';
+import { advanceFishingSession, createFishingSession, fishingCue, fishingForceGuide, FISHING_FORCE_LABELS, hookFish, setFishingForce, setFishingAssistance } from './fishing.js';
 import { BOAT_MESH_ORIGIN, BOAT_MOOR, boatFloatOffset } from './boat.js';
+import { ISLANDS } from './voyage.js';
+import { createVoyageScene } from './voyageScene.js';
+import { plotGuidance } from './playerGuidance.js';
+import { animateAvatarFace } from './avatarMotion.js';
+import { createSandCrab, stepSandCrab } from './sandCrab.js';
+import { createSandCrabGeometry, createSandCrabMaterial } from './sandCrabVisual.js';
+import { createSandTracks } from './sandTracks.js';
+import { createSandTrackVisual } from './sandTrackVisual.js';
+import { createEnvironment } from './environmentVisual.js';
 import { WAVE_BARRIER_APPROACH, WAVE_BARRIER_POSTS, WAVE_BARRIER_SITE } from './waveBarrier.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
@@ -17,9 +30,11 @@ import { stormStatus, summarizeStormReport, updateStorm } from './storm.js';
 import { INSTALLABLE_STOCK, drawIcon, drawInventoryPanel, getInventoryRows } from './inventoryUi.js';
 import { FRESHWATER_SITE, dailyWaterYield, drinkWater, rainForDay, refillCanteen, staminaCeiling } from './freshwater.js';
 import { initGoogleAuth } from './googleAuth.js';
+import { DISHES, RECIPES, edibleDishCount, learnRecipe, recipeQuote, upgradeRecipe } from './cooking.js';
+import { cookMeal } from './economy.js';
+import { COOKING_MOBILE_HEIGHT, drawCookingPanel } from './cookingUi.js';
+import { HUT_DOOR_INSIDE, HUT_DOOR_OUTSIDE, createHutCrossing, hutControls, hutDoorIntent, isOutsideHut, keepHutControlsOpen, stepHutCrossing } from './hut.js';
 
-const coastlineHarmonics = COASTLINE.radialHarmonics.map(({ frequency, amplitude, phase }) =>
-  `${amplitude}*sin(ang*${Number(frequency).toFixed(1)}+${phase})`).join('+');
 import { canvas, loadImage, loadState, nextFrame, offscreen, onForegroundChange, onResize, onTouches, saveState, viewport } from './platform.js';
 import islandGlb from '../assets/generated/tropical-island.glb';
 import vegetationGlb from '../assets/generated/tropical-vegetation.glb';
@@ -65,11 +80,15 @@ let hudPage = 'activity';
 let inventoryMode = 'bag';
 let inventoryPage = 0;
 let selectedInventoryId = null;
+let selectedRecipeId = 'bakedPotato';
+let kitchenPage = 0;
+let cookingJob = null;
 let shopPage = 0;
 let sellPage = 0;
 let tradeMode = 'buy';
 let stormReportOpen = false;
 let selectedSeed = 'sweetPotato';
+let selectedPlotId = null;
 let selectedSeafood = 'crab';
 let selectedTreeId = state.trees[0]?.id;
 const treeVisuals = new Map();
@@ -77,6 +96,7 @@ const marineTargets = [];
 let activeMarineTarget = null;
 let marineTargetMarker = null;
 let fishingSession = null;
+let fishingResult = null;
 let fishingVisual = null;
 let fishingLine = null;
 let lastFishingUiMs = 0;
@@ -87,10 +107,18 @@ let avatarRoute = [];
 let arrivalAction = null;
 let busyAction = false;
 let restTransition = null;
+let bedApproach = null;
+let hutBed = null;
 let hutDoorPivot = null;
+let hutDoorLabel = null;
+let walkDestinationMarker = null;
+let walkDestinationUntil = 0;
 let hutCrossing = null;
 let sceneElapsed = 0;
 let boatTrip = null;
+let voyage = null;
+let voyagePalmSource = null;
+let voyageArtAssets = {};
 let marineMode = 'land';
 let diveBlend = 0;
 let diveSecondsLeft = 0;
@@ -99,6 +127,8 @@ let diveMarker = null;
 let swimWake = null;
 const catchEffects = [];
 let walkGroundMeshes = [];
+let sandTracks = null;
+let sandTrackVisual = null;
 const groundRaycaster = new THREE.Raycaster();
 const groundSample = { x: NaN, z: NaN, y: 2.03 };
 const MAX_SURFACE_DISTANCE = 6.5;
@@ -196,26 +226,30 @@ function createAvatar() {
   const shirt = mat(0x2f7467, .88);
   const shorts = mat(0x314b54, .9);
   const fabric = mat(0xdec89a, .95);
-  const torso = mesh(new THREE.CapsuleGeometry(.27, .48, 4, 9), shirt, 0, .88, 0);
-  torso.rotation.z = -.06;
-  const head = mesh(new THREE.SphereGeometry(.2, 12, 9), skin, 0, 1.5, .025);
-  const hair = mesh(new THREE.SphereGeometry(.205, 12, 8, 0, Math.PI * 2, 0, Math.PI * .55), mat(0x503a2c), 0, 1.57, -.02);
-  const hatBrim = mesh(new THREE.CylinderGeometry(.27, .31, .035, 16), fabric, 0, 1.66, .02);
-  const hatCrown = mesh(new THREE.CylinderGeometry(.17, .2, .12, 14), fabric, 0, 1.73, .02);
-  const pack = mesh(new THREE.CapsuleGeometry(.14, .29, 3, 7), fabric, 0, .89, -.25);
-  const leftLeg = new THREE.Group(); leftLeg.position.set(-.12, .58, 0);
-  const rightLeg = new THREE.Group(); rightLeg.position.set(.12, .58, 0);
-  const leftArm = new THREE.Group(); leftArm.position.set(-.32, 1.11, .015);
-  const rightArm = new THREE.Group(); rightArm.position.set(.32, 1.11, .015);
-  for (const leg of [leftLeg, rightLeg]) leg.add(mesh(new THREE.CapsuleGeometry(.09, .32, 3, 6), shorts, 0, -.22, 0));
+  const torso = mesh(new THREE.SphereGeometry(.28, 16, 10), shirt, 0, .815, 0);
+  torso.scale.z = .73;
+  const head = mesh(new THREE.SphereGeometry(.35, 20, 12), skin, 0, 1.44, .025);
+  const hair = mesh(new THREE.SphereGeometry(.36, 16, 10, 0, Math.PI * 2, 0, Math.PI * .40), mat(0x503a2c), 0, 1.44, -.02);
+  const hatBrim = mesh(new THREE.CylinderGeometry(.443, .455, .043, 24), fabric, 0, 1.768, .02);
+  const hatCrown = mesh(new THREE.CylinderGeometry(.259, .277, .146, 20), fabric, 0, 1.849, .02);
+  const pack = mesh(new THREE.CapsuleGeometry(.14, .16, 3, 7), fabric, 0, .815, -.25);
+  const leftLeg = new THREE.Group(); leftLeg.position.set(-.145, .53, 0);
+  const rightLeg = new THREE.Group(); rightLeg.position.set(.145, .53, 0);
+  const leftArm = new THREE.Group(); leftArm.position.set(-.305, 1.018, .015);
+  const rightArm = new THREE.Group(); rightArm.position.set(.305, 1.018, .015);
+  for (const leg of [leftLeg, rightLeg]) {
+    leg.add(mesh(new THREE.CapsuleGeometry(.12, .10, 3, 8), shorts, 0, -.11, 0));
+    leg.add(mesh(new THREE.CylinderGeometry(.085, .085, .2, 10), skin, 0, -.31, 0));
+  }
   for (const arm of [leftArm, rightArm]) {
-    arm.add(mesh(new THREE.CapsuleGeometry(.075, .32, 3, 6), shirt, 0, -.21, 0));
-    arm.add(mesh(new THREE.SphereGeometry(.082, 10, 7), skin, 0, -.46, .02, false));
+    arm.add(mesh(new THREE.CapsuleGeometry(.10, .11, 3, 8), shirt, 0, -.105, 0));
+    arm.add(mesh(new THREE.CapsuleGeometry(.075, .08, 3, 8), skin, 0, -.29, 0));
+    arm.add(mesh(new THREE.SphereGeometry(.088, 12, 8), skin, 0, -.427, .02, false));
   }
   const boots = mat(0x463b31, .92);
   for (const leg of [leftLeg, rightLeg]) {
-    const boot = mesh(new THREE.SphereGeometry(.105, 10, 7), boots, 0, -.46, .07, false);
-    boot.scale.set(.9, .72, 1.45);
+    const boot = mesh(new THREE.SphereGeometry(.13, 12, 8), boots, 0, -.448, .07, false);
+    boot.scale.set(1, .63, 1.42);
     leg.add(boot);
   }
   leftArm.rotation.z = -.22;
@@ -286,17 +320,20 @@ function createAvatar() {
   waterDrops.visible = false;
   wateringCan.add(canBody, canHandle, canSpout, canRose, waterDrops);
   const dive = new THREE.Group();
-  const suit = mesh(new THREE.CapsuleGeometry(.31, .5, 4, 9), mat(0x285d67, .62), 0, .9, 0, false);
-  const maskRim = mesh(new THREE.TorusGeometry(.13, .018, 6, 12), mat(0x506e73, .42), 0, 1.5, .215, false);
-  const maskGlass = mesh(new THREE.CircleGeometry(.12, 12), new THREE.MeshStandardMaterial({ color: 0xa8e1e4, transparent: true, opacity: .5, roughness: .22, side: THREE.DoubleSide }), 0, 1.5, .216, false);
+  const suit = mesh(new THREE.SphereGeometry(.30, 16, 10), mat(0x285d67, .62), 0, .815, 0, false);
+  suit.scale.set(1, .92, .72);
+  const maskRim = mesh(new THREE.TorusGeometry(.16, .018, 6, 16), mat(0x506e73, .42), 0, 1.47, .337, false);
+  maskRim.scale.set(1.55, .77, 1);
+  const maskGlass = mesh(new THREE.CircleGeometry(.148, 16), new THREE.MeshStandardMaterial({ color: 0xa8e1e4, transparent: true, opacity: .5, roughness: .22, side: THREE.DoubleSide }), 0, 1.47, .339, false);
+  maskGlass.scale.set(1.55, .77, 1);
   const snorkel = curvedRod(.28, .012, mat(0x4b7d7c));
-  snorkel.position.set(.16, 1.49, .07); snorkel.rotation.z = -.25;
+  snorkel.position.set(.30, 1.49, .19); snorkel.rotation.z = -.25;
   dive.add(suit, maskRim, maskGlass, snorkel);
   const fins = [];
   for (const [index, x] of [-.13, .13].entries()) {
-    const tank = mesh(new THREE.CylinderGeometry(.065, .075, .43, 8), mat(0x79969b, .46), x, .92, -.3, false);
+    const tank = mesh(new THREE.CylinderGeometry(.065, .075, .35, 8), mat(0x79969b, .46), x, .82, -.32, false);
     tank.rotation.z = x * .08;
-    const fin = mesh(new THREE.ConeGeometry(.12, .42, 5), mat(0x315f68, .72), 0, -.58, .17, false);
+    const fin = mesh(new THREE.ConeGeometry(.12, .42, 5), mat(0x315f68, .72), 0, -.48, .20, false);
     fin.rotation.x = Math.PI / 2;
     fin.visible = false;
     [leftLeg, rightLeg][index].add(fin);
@@ -323,6 +360,9 @@ function createAvatar() {
   if (importedLimbs && Object.values(importedLimbs).every(Boolean)) {
     actor.add(visual);
     actor.userData.limbs = importedLimbs;
+    const faceHead = visual.getObjectByName('Avatar_HeadPivot');
+    const eyes = ['Avatar_Eye_L', 'Avatar_Eye_R'].map((name) => visual.getObjectByName(name));
+    if (faceHead && eyes.every(Boolean)) actor.userData.face = { head: faceHead, eyes };
     fins.forEach((fin, index) => (index ? importedLimbs.rightLeg : importedLimbs.leftLeg).add(fin));
     if (importedGrip) {
       importedGrip.add(toolRoot);
@@ -332,9 +372,18 @@ function createAvatar() {
   } else {
     actor.add(torso, head, hair, hatBrim, hatCrown, pack, leftLeg, rightLeg, leftArm, rightArm, toolRoot);
     actor.userData.limbs = { leftLeg, rightLeg, leftArm, rightArm };
+    for (const x of [-.126, .126]) {
+      const white = mesh(new THREE.SphereGeometry(1, 12, 8), mat(0xf8f3de), x, 1.472, .314, false);
+      white.scale.set(.073, .095, .024);
+      const pupil = mesh(new THREE.SphereGeometry(1, 10, 6), mat(0x32241b), x, 1.468, .338, false);
+      pupil.scale.set(.039, .062, .012);
+      actor.add(white, pupil);
+    }
+    rightArm.add(toolRoot);
+    toolRoot.position.set(0, -.425, .06);
   }
   actor.add(dive);
-  actor.position.set(state.shelter.inside ? 1.5 : -2.0, 2.03, state.shelter.inside ? -2.15 : -3.9);
+  actor.position.set(state.shelter.inside ? HUT_DOOR_INSIDE.x : -2.0, 2.03, state.shelter.inside ? HUT_DOOR_INSIDE.z : -3.9);
   actor.userData.fins = fins;
   actor.userData.tools = { rod, shovel, axe, net, wateringCan, dive };
   actor.userData.effects = { waterDrops, rodLine, float };
@@ -455,6 +504,34 @@ function groundHeightAt(x, z) {
   return groundSample.y;
 }
 
+const trackRaycaster = new THREE.Raycaster();
+const trackOrigin = new THREE.Vector3(), trackDown = new THREE.Vector3(0, -1, 0);
+function sampleTrackSand(x, z) {
+  trackRaycaster.set(trackOrigin.set(x, 30, z), trackDown);
+  const hit = trackRaycaster.intersectObjects(walkGroundMeshes, false)[0];
+  if (!hit) return null;
+  let inland, runupLimit = 3.2;
+  if (hit.object.name === 'Island_Sand') {
+    const angle = Math.atan2(-z, x), radius = Math.hypot(x, z);
+    inland = coastlineRadius(angle) - radius;
+    if (inland < .10 || radius < coastlineBandRadius(angle, 10.5) + .16) return null;
+    const deck = DOCK_DECK_OBSTACLE, dx = x - deck.x, dz = z - deck.z;
+    const localX = dx * Math.cos(deck.angle) + dz * Math.sin(deck.angle);
+    const localZ = -dx * Math.sin(deck.angle) + dz * Math.cos(deck.angle);
+    if (Math.abs(localX) < deck.halfWidth && Math.abs(localZ) < deck.halfDepth) return null;
+  } else if (hit.object.name.startsWith('VoyageTerrain_')) {
+    const island = ISLANDS.find(i => hit.object.name === `VoyageTerrain_${i.id}`);
+    if (!island) return null;
+    const dx = x - island.x, dz = z - island.z, angle = Math.atan2(dx, dz);
+    const shore = island.radius * (.955 + .025 * Math.sin(angle * 3 + island.x) + .015 * Math.sin(angle * 5 + island.z));
+    const radius = Math.hypot(dx, dz);
+    if (radius < shore * .80 || radius > shore - .10) return null;
+    inland = shore - radius; runupLimit = Math.min(3.2, island.radius * .22);
+  } else return null;
+  const normal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
+  return { y: hit.point.y, normal: { x: normal.x, y: normal.y, z: normal.z }, inland, runupLimit };
+}
+
 function surfaceDive(text) {
   marineMode = 'swim';
   diveSecondsLeft = 0;
@@ -490,7 +567,8 @@ function toggleDive() {
 
 function updateCoastalAvatar(deltaSeconds) {
   if (!avatar) return;
-  if (boatTrip) {
+  if (restTransition || bedApproach) return;
+  if (boatTrip || voyage?.engaged) {
     if (swimWake) swimWake.visible = false;
     if (diveMarker) diveMarker.visible = false;
     return;
@@ -512,7 +590,7 @@ function updateCoastalAvatar(deltaSeconds) {
     if (swimWake) swimWake.visible = false;
     return;
   }
-  if (marineMode === 'land') { marineMode = 'swim'; flash('已进入海水 · 出海页可下潜，点击沙滩返回'); }
+  if (marineMode === 'land') { marineMode = 'swim'; flash('已进入海水 · 活动页可下潜，点击沙滩返回'); }
   if (marineMode === 'dive') {
     diveSecondsLeft -= deltaSeconds;
     if (state.diveLevel) state.oxygen = Math.max(0, state.oxygen - deltaSeconds * 2);
@@ -569,6 +647,7 @@ function updateCoastalAvatar(deltaSeconds) {
 }
 
 function walkTo(x, z, action = null, stopDistance = .72) {
+  if (voyage?.engaged) { flash('正在远航，请先返航靠岸后操作家园设施'); return false; }
   const shelterAction = ['hut-door-open', 'hut-door-close'].includes(action?.type);
   if ((storm.phase === 'impact' && !shelterAction) || busyAction || state.shelter.inside) return false;
   if (activeMarineTarget && !['capture', 'sea-capture', 'trip-start'].includes(action?.type)) releaseMarineTarget();
@@ -590,6 +669,16 @@ function walkTo(x, z, action = null, stopDistance = .72) {
   // A blocked destination is projected to the nearest reachable edge.
   const projected = Math.hypot(route.at(-1).x - x, route.at(-1).z - z) > .3;
   arrivalAction = action ? { ...action, stopDistance: projected ? .12 : stopDistance } : null;
+  showWalkDestination(route.at(-1));
+  if (Math.hypot(x - avatar.position.x, z - avatar.position.z) > stopDistance) {
+    const worldAction = action?.root?.userData.action;
+    const notice = action?.type === 'hut-door-open' ? '已选小屋门 · 正前往开门'
+      : action?.type === 'hut-door-close' ? '已选小屋门 · 正前往关门'
+        : action?.type === 'water-station' ? '已选淡水收集场 · 到达后查看储水'
+          : action?.type === 'voyage-board' ? '已选小船 · 正前往码头登船'
+            : worldAction?.type === 'gather' ? `已选${worldAction.kind === 'wood' ? '木材' : '贝壳'} · 到达后采集` : null;
+    if (notice) flash(notice);
+  }
   if (!avatarRoute.length && Math.hypot(avatarTarget.x - avatar.position.x, avatarTarget.z - avatar.position.z) <= (arrivalAction?.stopDistance ?? .12)) {
     avatarTarget = null;
     const next = arrivalAction;
@@ -599,7 +688,31 @@ function walkTo(x, z, action = null, stopDistance = .72) {
   return true;
 }
 
+function showWalkDestination(point) {
+  if (!walkDestinationMarker) {
+    walkDestinationMarker = new THREE.Mesh(new THREE.RingGeometry(.34, .48, 32),
+      new THREE.MeshBasicMaterial({ color: 0xffe4a0, transparent: true, opacity: .9,
+        depthWrite: false, side: THREE.DoubleSide }));
+    walkDestinationMarker.rotation.x = -Math.PI / 2;
+    scene.add(walkDestinationMarker);
+  }
+  walkDestinationMarker.position.set(point.x, Math.max(groundHeightAt(point.x, point.z), water.position.y) + .08, point.z);
+  walkDestinationMarker.visible = true;
+  walkDestinationUntil = Date.now() + 2400;
+}
+
+function updateWalkDestination() {
+  if (!walkDestinationMarker) return;
+  const remaining = walkDestinationUntil - Date.now();
+  walkDestinationMarker.visible = remaining > 0 && !state.shelter.inside && !voyage?.engaged;
+  if (!walkDestinationMarker.visible) return;
+  walkDestinationMarker.scale.setScalar(1 + Math.sin(remaining / 150) * .12);
+  walkDestinationMarker.material.opacity = Math.min(.9, remaining / 600);
+}
+
 function updateAvatar(deltaSeconds) {
+  if (restTransition || bedApproach) return;
+  if (voyage?.engaged) return;
   if (!avatar || hutCrossing || (storm.phase === 'impact' && !['hut-door-open', 'hut-door-close'].includes(arrivalAction?.type))) return;
   sceneElapsed += deltaSeconds;
   const limbs = avatar.userData.limbs;
@@ -607,7 +720,13 @@ function updateAvatar(deltaSeconds) {
   const effects = avatar.userData.effects;
   if (effects?.waterDrops) effects.waterDrops.visible = false;
   if (effects?.rodLine) effects.rodLine.visible = false;
-  if (acting) {
+  if (cookingJob) {
+    limbs.leftArm.rotation.x = -.85;
+    limbs.rightArm.rotation.x = -.9 + Math.sin(sceneElapsed * 7) * .12;
+    limbs.leftArm.rotation.z = -.16;
+    limbs.rightArm.rotation.z = .25 + Math.cos(sceneElapsed * 7) * .12;
+    avatar.userData.toolRoot.rotation.set(0, 0, 0);
+  } else if (acting) {
     const progress = THREE.MathUtils.clamp((sceneElapsed - avatar.userData.actionStarted) / avatar.userData.actionDuration, 0, 1);
     const beat = Math.sin(sceneElapsed * 15);
     const cast = Math.sin(progress * Math.PI);
@@ -690,7 +809,7 @@ function updateAvatar(deltaSeconds) {
     avatar.userData.toolRoot.rotation.z = 0;
   }
   if (!avatarTarget) {
-    if (!acting && !fishingSession) {
+    if (!acting && !fishingSession && !cookingJob) {
       limbs.leftLeg.rotation.x = 0;
       limbs.rightLeg.rotation.x = 0;
       limbs.leftArm.rotation.x = 0;
@@ -732,19 +851,15 @@ function updateAvatar(deltaSeconds) {
   limbs.rightArm.rotation.x = -limbs.rightLeg.rotation.x * .65;
 }
 
-scene.add(new THREE.HemisphereLight(0xd9e8e8, 0x435443, 1.8));
-const sun = new THREE.DirectionalLight(0xfff0cf, 4.2);
-sun.position.set(-14, 24, -10);
-sun.castShadow = true;
-sun.shadow.mapSize.set(1024, 1024);
-sun.shadow.camera.left = sun.shadow.camera.bottom = -20;
-sun.shadow.camera.right = sun.shadow.camera.top = 20;
-sun.shadow.camera.near = 1;
-sun.shadow.camera.far = 60;
-sun.shadow.bias = -0.0008;
-scene.add(sun);
+const rainGroundRay = new THREE.Raycaster(), rainGroundOrigin = new THREE.Vector3();
+const rainGroundDown = new THREE.Vector3(0, -1, 0);
+const environment = createEnvironment(scene, { rainCount: screen.width < 600 ? 1200 : 2400,
+  heightAt: (x, z) => {
+    rainGroundRay.set(rainGroundOrigin.set(x, 30, z), rainGroundDown);
+    return rainGroundRay.intersectObjects(walkGroundMeshes, false)[0]?.point.y ?? -1.7;
+  } });
 
-const seabedGeometry = new THREE.CircleGeometry(64, 80);
+const seabedGeometry = new THREE.CircleGeometry(220, 96);
 seabedGeometry.rotateX(-Math.PI / 2);
 {
   const position = seabedGeometry.attributes.position;
@@ -762,7 +877,7 @@ const seabed = mesh(seabedGeometry, new THREE.MeshStandardMaterial({ vertexColor
 scene.add(seabed);
 
 const water = mesh(
-  new THREE.PlaneGeometry(100, 100),
+  new THREE.PlaneGeometry(440, 440),
   new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
@@ -777,10 +892,17 @@ const water = mesh(
       uBoatWake: { value: 0 },
       uTide: { value: 0 },
       uStorm: { value: 0 },
+      uDaylight: { value: 1 },
+      uSunlight: { value: 1 },
+      uMoonlight: { value: 0 },
+      uMoonDirection: { value: new THREE.Vector3(-.6, .7, .4).normalize() },
+      uSunDirection: { value: new THREE.Vector3(-.4, .8, -.3).normalize() },
+      uIslands: { value: ISLANDS.map(i => new THREE.Vector3(i.x, i.z, i.radius)) },
     },
     vertexShader: `varying vec3 vWorld; void main(){ vec4 w=modelMatrix*vec4(position,1.); vWorld=w.xyz; gl_Position=projectionMatrix*viewMatrix*w; }`,
     fragmentShader: `
-      uniform float uTime, uBoatWake, uTide, uStorm; uniform vec2 uBoat,uBoatDir; uniform vec3 uLagoon,uShallow,uDeep,uFoam; varying vec3 vWorld;
+      uniform float uTime, uBoatWake, uTide, uStorm, uDaylight,uSunlight,uMoonlight; uniform vec2 uBoat,uBoatDir; uniform vec3 uLagoon,uShallow,uDeep,uFoam,uSunDirection,uMoonDirection; uniform vec3 uIslands[4]; varying vec3 vWorld;
+      ${COAST_SWASH_GLSL}
       float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453123); }
       float noise(vec2 p){
         vec2 i=floor(p), f=fract(p); f=f*f*(3.-2.*f);
@@ -791,11 +913,20 @@ const water = mesh(
         vec2 p=vWorld.xz;
         float ang=atan(-p.y,p.x);
         float r=length(p);
-        float shore=${COASTLINE.shoreRadius}*(1.0+${coastlineHarmonics});
+        float shore=${coastlineShaderRadius()};
         // Higher water moves the water/sand intersection inland; lower water
         // reveals the underwater slope. This same contour drives the foam mask.
         float wetShore=shore-uTide*.48;
         float shoreDepth=max(0.0,r-wetShore);
+        float runupLimit=3.2;
+        for(int i=0;i<4;i++){
+          vec2 delta=p-uIslands[i].xy;
+          float islandAngle=atan(delta.x,delta.y);
+          float islandShore=${islandCoastlineShaderRadius('uIslands[i].z', 'islandAngle', 'uIslands[i].x', 'uIslands[i].y')};
+          float islandWet=islandShore-uTide*.2;
+          float islandDepth=max(0.0,length(delta)-islandWet);
+          if(islandDepth<shoreDepth){shoreDepth=islandDepth;shore=islandShore;wetShore=islandWet;r=length(delta);ang=islandAngle;runupLimit=min(3.2,uIslands[i].z*.22);}
+        }
         float lagoon=smoothstep(.45,9.5,shoreDepth);
         float deep=smoothstep(7.0,20.0,shoreDepth);
         float c1=noise(vec2(p.x*2.6+uTime*.35,p.y*2.6-uTime*.30));
@@ -812,16 +943,12 @@ const water = mesh(
         float along=ang*shore;
         float edgeNoise=(noise(vec2(along*.24+uTime*.12,uTime*.055))-.5)*.24
           +(noise(p*.38+uTime*.045)-.5)*.15;
-        float swash=shoreDepth+sin(along*.24-uTime*(.8+uStorm*1.25))*(.10+uStorm*.16)
-          +rip*(.13+uStorm*.08)-edgeNoise;
-        float segment=noise(vec2(along*.31,uTime*.07+ang*.19));
-        float foamWidth=mix(.12,.38,noise(vec2(along*.17,uTime*.045)))+uStorm*.16;
-        float shoreFoam=smoothstep(.025,.13,swash)
-          *(1.0-smoothstep(.14,.14+foamWidth,swash));
-        shoreFoam*=smoothstep(.56,.88,segment);
+        vec4 swash=coastSwash(p,shore-r,uTime,uTide,uStorm,runupLimit);
+        float shoreFoam=swash.y;
+        float surfDistance=shoreDepth+rip*(.13+uStorm*.08)-edgeNoise;
         float breakerOffset=.82+1.1*noise(vec2(along*.13,uTime*.035));
-        float outerFoam=smoothstep(breakerOffset,breakerOffset+.13,swash)
-          *(1.0-smoothstep(breakerOffset+.20,breakerOffset+.55,swash));
+        float outerFoam=smoothstep(breakerOffset,breakerOffset+.13,surfDistance)
+          *(1.0-smoothstep(breakerOffset+.20,breakerOffset+.55,surfDistance));
         outerFoam*=smoothstep(.63,.84,noise(vec2(along*.22,uTime*.05)))*.28;
         float foam=max(shoreFoam,outerFoam);
         vec2 boatDelta=p-uBoat;
@@ -841,35 +968,28 @@ const water = mesh(
         color+=uFoam*rip*.028;
         // Sky reflection: ripple normals catch a pale sky, so the surface reads
         // as lit and reflective instead of a flat sheet of colour.
-        vec3 rippleN=normalize(vec3(rip*2.2,1.0,rip*1.5));
+        vec2 slope=vec2(cos(p.x*1.3+p.y*.8-uTime*.8)*.18+cos(p.x*3.1-uTime*1.2)*.06,
+          sin(p.y*1.7-p.x*.5+uTime*.7)*.16+sin(p.y*2.9+uTime*1.1)*.06);
+        vec3 rippleN=normalize(vec3(slope.x,1.0,slope.y));
         float fres=pow(1.0-max(dot(rippleN,vec3(0.,1.,0.)),0.),3.0);
         color=mix(color,vec3(.72,.90,1.0),fres*.30*(1.0-deep*.6));
-        float sparkle=step(.995,hash(floor(p*2.6+uTime*.35)));
-        color+=uFoam*sparkle*.07*(1.0-deep);
+        vec3 halfLight=normalize(uSunDirection+vec3(.40,.82,.40));
+        float sparkle=pow(max(0.,dot(rippleN,halfLight)),100.);
+        color*=mix(.012,1.0,uDaylight);
+        color+=vec3(1.,.90,.71)*sparkle*.15*uSunlight*(1.0-uStorm*.65);
+        vec3 moonHalfLight=normalize(uMoonDirection+vec3(.40,.82,.40));
+        float moonSparkle=pow(max(0.,dot(rippleN,moonHalfLight)),90.);
+        color+=vec3(.56,.69,1.)*moonSparkle*.11*uMoonlight;
         float alpha=(mix(.38,.90,deep)+clamp(foam,0.,1.)*.12)*waterMask;
         gl_FragColor=vec4(color,clamp(alpha,0.,1.));
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
       }`,
   }), 0, -0.02, 0, false,
 );
 water.rotation.x = -Math.PI / 2;
 water.renderOrder = 2;
 scene.add(water);
-
-const stormRainCount = 260;
-const rainSeeds = Array.from({ length: stormRainCount }, (_, index) => {
-  const hash = (value) => { const n = Math.sin(value * 127.1 + 311.7) * 43758.5453; return n - Math.floor(n); };
-  return { x: (hash(index + 3) - .5) * 54, z: (hash(index + 71) - .5) * 54, y: hash(index + 139) * 28 };
-});
-const rainGeometry = new THREE.BufferGeometry();
-const rainPositions = new Float32Array(stormRainCount * 6);
-rainGeometry.setAttribute('position', new THREE.BufferAttribute(rainPositions, 3));
-const stormRain = new THREE.LineSegments(rainGeometry, new THREE.LineBasicMaterial({
-  color: 0xc4e2e5, transparent: true, opacity: .22, depthWrite: false,
-}));
-stormRain.visible = false;
-stormRain.frustumCulled = false;
-stormRain.renderOrder = 3;
-scene.add(stormRain);
 
 const gltfLoader = new GLTFLoader();
 const buildingSources = {};
@@ -1116,6 +1236,7 @@ function updateFishingVisual(time) {
 }
 
 function startFishingSession(target, fromBoat) {
+  fishingResult = null;
   const spec = SEAFOOD[target.speciesId];
   if (!targetAvailable(target) || activeMarineTarget?.id !== target.id || !target.proxy.visible) {
     releaseMarineTarget(); flash('鱼已游开，请重新选择可见鱼群'); return false;
@@ -1166,14 +1287,22 @@ function finishFishingSession(reason = null) {
     state.stamina = Math.max(0, state.stamina - penalty.stamina);
     if (penalty.minutes) spendActionTime(state, penalty.minutes);
     if (target) state.gatherCooldowns[target.id] = state.gameMinutes + penalty.cooldown;
-    flash(({ 'too-early': '浮漂还没下沉，提竿过早惊走了鱼', 'missed-bite': '咬钩窗口已过，鱼脱钩游走',
+    const explanation = ({ 'too-early': '浮漂还没下沉，提竿过早惊走了鱼', 'missed-bite': '咬钩窗口已过，鱼脱钩游走',
       'hook-slip': '收线力度与鱼的挣扎不匹配，鱼挣脱了', 'line-slack': '收线太慢，鱼松脱了',
-      storm: '风浪变大，已收竿结束垂钓', cancelled: '已收起鱼竿，稍后再试' })[failure] || '鱼儿脱钩了');
+      storm: '风浪变大，已收竿结束垂钓', cancelled: '已收起鱼竿，稍后再试' })[failure] || '鱼儿脱钩了';
+    fishingResult = { ...session, phase: 'result', explanation, penalty,
+      tip: failure === 'too-early' || failure === 'missed-bite'
+        ? '下次等浮漂突然下沉，再点「提竿」'
+        : failure === 'hook-slip' || failure === 'line-slack'
+          ? '下次跟随鱼的动作调力度，也可开启辅助收线'
+          : '稍后选择另一处可见鱼群再试' };
+    flash(explanation);
   }
   releaseMarineTarget();
   if (session.fromBoat) startBoatReturnTrip();
   saveState(state);
   drawHud();
+  if (fishingResult) drawFishingPanel();
 }
 
 function handleFishingAction(action) {
@@ -1184,6 +1313,10 @@ function handleFishingAction(action) {
     if (hooked) { playAvatarAction('rod'); drawFishingPanel(); }
     else if (fishingSession.phase === 'failed') finishFishingSession();
     return;
+  }
+  if (action === 'assist') { setFishingAssistance(fishingSession, !fishingSession.assisted); drawFishingPanel(); return; }
+  if (action === 'force-down' || action === 'force-up') {
+    setFishingForce(fishingSession, fishingSession.forceValue + (action === 'force-up' ? .05 : -.05)); drawFishingPanel(); return;
   }
   if (setFishingForce(fishingSession, action)) drawFishingPanel();
 }
@@ -1208,7 +1341,7 @@ function findMarineTarget(speciesId, preferred = null) {
     .sort((a, b) => Math.hypot(a.x - origin.x, a.z - origin.z) - Math.hypot(b.x - origin.x, b.z - origin.z))[0] || null;
 }
 
-// Marine animals share one instanced draw call per species. Each catchable
+// Marine animals share instanced draw calls. Each catchable
 // instance also has a pick proxy, so inventory only changes for a visible target.
 function addSchool(source, count, seed, tint, baseY, material, options = {}) {
   if (!source) return;
@@ -1236,6 +1369,7 @@ function addSchool(source, count, seed, tint, baseY, material, options = {}) {
       speed: wander ? speed : speed * (rand() < .5 ? -1 : 1),
       phase,
       roamer: wander ? createRoamer(radius, phase, speed, seed + i * 73) : null,
+      crab: speciesId === 'crab' ? createSandCrab(radius, phase, seed + i * 73) : null,
       bob: rand() * Math.PI * 2,
       y: baseY + (rand() - .5) * spread,
       size: sizeMin + rand() * (sizeMax - sizeMin),
@@ -1246,8 +1380,8 @@ function addSchool(source, count, seed, tint, baseY, material, options = {}) {
   }
   if (speciesId) data.forEach((member, index) => {
     const target = { id: `marine-${speciesId}-${seed}-${index}`, speciesId, member, source,
-      x: member.roamer?.x ?? Math.cos(member.phase) * member.radius,
-      z: member.roamer?.z ?? Math.sin(member.phase) * member.radius,
+      x: member.crab?.x ?? member.roamer?.x ?? Math.cos(member.phase) * member.radius,
+      z: member.crab?.z ?? member.roamer?.z ?? Math.sin(member.phase) * member.radius,
       y: member.y, reserved: false };
     const proxy = actionRoot(new THREE.Mesh(marineHitGeometry, marineHitMaterial), { type: 'marine', targetId: target.id });
     proxy.position.set(target.x, target.y, target.z);
@@ -1258,7 +1392,14 @@ function addSchool(source, count, seed, tint, baseY, material, options = {}) {
   });
   source.traverse((part) => {
     if (!part.isMesh) return;
-    const inst = new THREE.InstancedMesh(part.geometry, material || part.material, count);
+    const geometry = speciesId === 'crab' ? part.geometry.clone() : part.geometry;
+    const crabGait = speciesId === 'crab' ? new THREE.InstancedBufferAttribute(new Float32Array(count * 2), 2) : null;
+    if (crabGait) {
+      crabGait.setUsage(THREE.DynamicDrawUsage);
+      geometry.setAttribute('crabGait', crabGait);
+      data.forEach((member, i) => crabGait.setXY(i, member.crab.gait, 0));
+    }
+    const inst = new THREE.InstancedMesh(geometry, material || part.material, count);
     inst.castShadow = false;
     inst.receiveShadow = false;
     if (material?.userData?.surfaceSchool) inst.renderOrder = 3;
@@ -1268,7 +1409,8 @@ function addSchool(source, count, seed, tint, baseY, material, options = {}) {
     }
     scene.add(inst);
     animated.push({
-      school: { inst, data, matrix: new THREE.Matrix4(), pos: new THREE.Vector3(),
+      school: { inst, data, crabGait, normal: new THREE.Vector3(), slopeQuat: new THREE.Quaternion(),
+                matrix: new THREE.Matrix4(), pos: new THREE.Vector3(),
                 quat: new THREE.Quaternion(), bankQuat: new THREE.Quaternion(),
                 scale: new THREE.Vector3() },
     });
@@ -1280,25 +1422,12 @@ async function loadSceneAssets() {
     parseGlb(islandGlb), parseGlb(vegetationGlb), parseGlb(buildingsGlb), parseGlb(avatarGlb), loadAtlas(),
   ]);
   const atlasMaterial = new THREE.MeshStandardMaterial({ map: atlas, vertexColors: true, roughness: .88, metalness: 0 });
-const atlasLeafMaterial = new THREE.MeshStandardMaterial({
-    map: atlas, vertexColors: true, roughness: .88, metalness: 0, side: THREE.DoubleSide,
-  });
-  atlasLeafMaterial.onBeforeCompile = (shader) => {
-    const uWindTime = { value: 0 }, uWindStrength = { value: .08 };
-    shader.uniforms.uWindTime = uWindTime;
-    shader.uniforms.uWindStrength = uWindStrength;
-    shader.vertexShader = shader.vertexShader.replace('#include <common>',
-      '#include <common>\nuniform float uWindTime; uniform float uWindStrength;')
-      .replace('#include <begin_vertex>', `#include <begin_vertex>
-        float leafHeight=max(position.y,0.0);
-        float leafWave=sin(uWindTime*1.7+position.x*.75+position.z*.55);
-        transformed.x+=leafWave*uWindStrength*leafHeight*.045;
-        transformed.z+=cos(uWindTime*1.3+position.x*.45)*uWindStrength*leafHeight*.025;`);
-    windShaderUniforms.push({ time: uWindTime, strength: uWindStrength });
-  };
-  atlasLeafMaterial.customProgramCacheKey = () => 'island-leaf-wind-v1';
+  const atlasLeafMaterial = createFoliageMaterial(windShaderUniforms, atlas);
+  const authoredPlantMaterial = createFoliageMaterial(windShaderUniforms);
   applyAtlas(islandAsset.scene, atlasMaterial);
-  applyAtlas(vegetationAsset.scene, atlasMaterial, atlasLeafMaterial);
+  const beach = islandAsset.scene.getObjectByName('Island_Sand');
+  if (beach) beach.material = createBeachMaterial(water.material.uniforms);
+  applyFoliageAtlas(vegetationAsset.scene, atlasMaterial, atlasLeafMaterial, authoredPlantMaterial);
   applyAtlas(buildingAsset.scene, atlasMaterial);
   avatarTemplate = avatarAsset.scene;
   avatarTemplate.traverse((object) => {
@@ -1316,6 +1445,8 @@ const atlasLeafMaterial = new THREE.MeshStandardMaterial({
     heroBoat.name = 'BoatPivot';
     heroBoat.position.set(BOAT_MESH_ORIGIN.x, BOAT_MESH_ORIGIN.y, BOAT_MESH_ORIGIN.z);
     heroBoat.add(boatMesh);
+    heroBoat.userData.action = { type: 'voyage-board' };
+    interactive.push(heroBoat);
     islandAsset.scene.add(heroBoat);
   }
   // The playable hut is built from Hut_Source; the baked showcase copy must not overlap it.
@@ -1336,6 +1467,7 @@ const atlasLeafMaterial = new THREE.MeshStandardMaterial({
   }
 
   const palmSource = vegetationAsset.scene.getObjectByName('Palm_Source');
+  voyagePalmSource = palmSource;
   createTreeVisuals(palmSource, terrainMeshes);
   const bushSource = vegetationAsset.scene.getObjectByName('Bush_Source');
   const clearBushes = sparseBushPlacements(
@@ -1345,10 +1477,18 @@ const atlasLeafMaterial = new THREE.MeshStandardMaterial({
       maxCount: 14 },
   );
   const bushPlacements = groundPlacements(bushSource, clearBushes, terrainMeshes);
-  addInstances(bushSource, bushPlacements, undefined, [0xc9eab1, 0xe3f3c2, 0xa9d397].map((color) => new THREE.Color(color)));
-  addHibiscusBlossoms(bushPlacements);
+  addInstances(bushSource, bushPlacements, undefined, bushSource.userData.authoredPlant
+    ? undefined : [0xc9eab1, 0xe3f3c2, 0xa9d397].map((color) => new THREE.Color(color)));
+  // The approved mesh already includes its attached petals and stamens.
+  if (!bushSource.userData.authoredPlant) addHibiscusBlossoms(bushPlacements);
   for (const [x, , z, scale] of clearBushes) if (Math.hypot(x, z) < 11.3) walkObstacles.push({ x, z, r: .42 + scale * .42 });
   const rockSource = vegetationAsset.scene.getObjectByName('Rock_Source');
+  voyageArtAssets = {
+    rock: rockSource, bush: bushSource,
+    coral: vegetationAsset.scene.getObjectByName('Reef_Staghorn_Source'),
+    seaGrass: vegetationAsset.scene.getObjectByName('Sea_Grass_Source'),
+    fish: vegetationAsset.scene.getObjectByName('Fish_A_Source'),
+  };
   const rocks = [
     [-7.4, 1.3, 5.2, .7], [7.8, 1.1, 5.1, .62], [-8.5, 1, -4.2, .65], [8.7, 1, -3.5, .58],
   ];
@@ -1423,7 +1563,8 @@ const atlasLeafMaterial = new THREE.MeshStandardMaterial({
             { radiusMin: 16.5, radiusMax: 18.5, spread: .9, sizeMin: .76, sizeMax: 1.22, speedMin: .24, speedMax: .45, wander: true, speciesId: 'reefFish' });
   addSchool(reefSource('Fish_B'), 16, 83, [0xe68d65, 0xd7715d].map((c) => new THREE.Color(c)), -1.1, lagoonSpotMaterial,
             { radiusMin: 16.5, radiusMax: 18.5, spread: .8, sizeMin: .76, sizeMax: 1.13, speedMin: .22, speedMax: .41, wander: true, speciesId: 'reefFish' });
-  addSchool(reefSource('Sea_Crab'), 7, 103, [new THREE.Color(0xd96f43), new THREE.Color(0xc95b3d)], .75, animalMaterial,
+  const crabSource = new THREE.Mesh(createSandCrabGeometry(), createSandCrabMaterial());
+  addSchool(crabSource, 7, 103, [new THREE.Color(0xffceac), new THREE.Color(0xf8b786)], .75, crabSource.material,
             { radiusMin: 12.6, radiusMax: 14.2, spread: .06, sizeMin: .42, sizeMax: .54, bobble: .012, speedMin: .025, speedMax: .06, speciesId: 'crab' });
   addSchool(reefSource('Sea_SilverJack'), 12, 107, [new THREE.Color(0xbce6e1), new THREE.Color(0x9fd2d5)], -.82, silverJackMaterial,
             { radiusMin: 22, radiusMax: 31, spread: .65, sizeMin: .9, sizeMax: 1.34, bank: .08, speedMin: .3, speedMax: .54, wander: true, speciesId: 'silverJack' });
@@ -1671,70 +1812,75 @@ const plots = {
   dock: { pos: [10.2, .95, 7.0] },
 };
 const HUT_APPROACH = { x: 1.6, z: -5.4 };
-const HUT_DOOR_OUTSIDE = { x: 1.5, z: -3.55 };
-const HUT_DOOR_INSIDE = { x: 1.5, z: -2.15 };
+const KITCHEN_SITE = { x: -.95, z: -5.8 };
+const KITCHEN_APPROACH = { x: .1, z: -5.8 };
 
 function activateHutDoor() {
   if (!state.built.hut || hutCrossing || busyAction) return;
-  if (state.shelter.inside) {
-    if (!state.shelter.doorOpen) {
-      state.shelter.doorOpen = true;
-      flash('小屋门已打开 · 可走出，或关门继续避险');
-    } else {
-      state.shelter.doorOpen = false;
-      flash('小屋门已关闭 · 当前安全避险');
-    }
-  } else if (!state.shelter.doorOpen) {
-    walkTo(HUT_DOOR_OUTSIDE.x, HUT_DOOR_OUTSIDE.z, { type: 'hut-door-open' }, .45);
-  } else if (Math.hypot(avatar.position.x - HUT_DOOR_OUTSIDE.x, avatar.position.z - HUT_DOOR_OUTSIDE.z) > 1.4) {
+  const intent = hutDoorIntent(state.shelter, Math.hypot(avatar.position.x - HUT_DOOR_OUTSIDE.x, avatar.position.z - HUT_DOOR_OUTSIDE.z));
+  if (intent === 'open') {
+    state.shelter.doorOpen = true;
+    hudPage = 'activity'; hudOpen = true;
+    flash('小屋门已打开 · 点屋外或“走出小屋”出门；再次点门关闭');
+  } else if (intent === 'close') { closeHutDoor(); return; }
+  else if (intent === 'approach') {
     walkTo(HUT_DOOR_OUTSIDE.x, HUT_DOOR_OUTSIDE.z, { type: 'hut-door-open' }, .45);
   } else startHutCrossing(true);
   saveState(state);
   drawHud();
 }
 
-function closeHutDoorOutside() {
-  if (state.shelter.inside || !state.shelter.doorOpen || hutCrossing) return;
-  if (Math.hypot(avatar.position.x - HUT_DOOR_OUTSIDE.x, avatar.position.z - HUT_DOOR_OUTSIDE.z) > 1.4) {
+function closeHutDoor() {
+  if (!state.shelter.doorOpen || hutCrossing || busyAction) return;
+  if (!state.shelter.inside && Math.hypot(avatar.position.x - HUT_DOOR_OUTSIDE.x, avatar.position.z - HUT_DOOR_OUTSIDE.z) > 1.4) {
     walkTo(HUT_DOOR_OUTSIDE.x, HUT_DOOR_OUTSIDE.z, { type: 'hut-door-close' }, .45);
     return;
   }
   state.shelter.doorOpen = false;
-  flash('小屋门已关闭');
+  if (state.shelter.inside) { hudPage = 'activity'; hudOpen = true; }
+  flash(state.shelter.inside ? '小屋门已关闭 · 留在屋内安全避险' : '小屋门已关闭');
   saveState(state);
   drawHud();
 }
 
-function startHutCrossing(entering) {
-  if (!state.shelter.doorOpen) return;
+function startHutCrossing(entering, destination = null) {
+  if (hutCrossing || busyAction || !avatar) return;
+  const crossing = createHutCrossing(state.shelter, avatar.position, entering, destination);
+  if (!crossing) return;
   avatarTarget = null;
   avatarRoute = [];
   arrivalAction = null;
-  hutCrossing = { entering, elapsed: 0, startX: avatar.position.x, startZ: avatar.position.z,
-    endX: entering ? HUT_DOOR_INSIDE.x : HUT_DOOR_OUTSIDE.x,
-    endZ: entering ? HUT_DOOR_INSIDE.z : HUT_DOOR_OUTSIDE.z };
+  hutCrossing = crossing;
   hudOpen = false;
 }
 
 function updateHutDoor(deltaSeconds) {
+  if (hutDoorLabel) {
+    const text = state.shelter.inside ? (state.shelter.doorOpen ? '小屋 · 关门' : '小屋 · 开门')
+      : state.shelter.doorOpen ? '小屋 · 进入' : '小屋 · 开门';
+    paintActionLabel(hutDoorLabel, text);
+  }
   if (hutDoorPivot) {
     const target = state.shelter.doorOpen ? 1.35 : 0;
     hutDoorPivot.rotation.y += (target - hutDoorPivot.rotation.y) * Math.min(1, deltaSeconds * 8);
   }
   if (!hutCrossing || !avatar) return;
-  hutCrossing.elapsed += deltaSeconds;
-  const t = Math.min(1, hutCrossing.elapsed / .85);
-  const eased = t * t * (3 - 2 * t);
-  avatar.position.x = THREE.MathUtils.lerp(hutCrossing.startX, hutCrossing.endX, eased);
-  avatar.position.z = THREE.MathUtils.lerp(hutCrossing.startZ, hutCrossing.endZ, eased);
-  avatar.rotation.y = hutCrossing.entering ? Math.PI : 0;
-  if (t < 1) return;
-  state.shelter.inside = hutCrossing.entering;
+  const step = stepHutCrossing(state.shelter, hutCrossing, deltaSeconds);
+  avatar.position.x = step.x;
+  avatar.position.z = step.z;
+  avatar.rotation.y = Math.atan2(hutCrossing.endX - hutCrossing.startX, hutCrossing.endZ - hutCrossing.startZ);
+  if (!step.done) return;
+  const destination = hutCrossing.destination;
   hutCrossing = null;
+  // Crossing used to hide the only close button. Present indoor controls
+  // immediately on arrival, independently of the previously selected tab.
+  if (state.shelter.inside) { hudPage = 'activity'; hudOpen = true; }
+  else if (hudPage === 'activity') hudOpen = false;
   updateCamera();
   flash(state.shelter.inside ? '已进入小屋 · 请关门避险' : '已走出小屋 · 请关门');
   saveState(state);
   drawHud();
+  if (destination && !state.shelter.inside && storm.phase !== 'impact') walkTo(destination.x, destination.z);
 }
 
 function createHutDoorSign() {
@@ -1742,20 +1888,138 @@ function createHutDoorSign() {
   root.position.set(1.5, 2.03, -3.28);
   const sign = mesh(new RoundedBoxGeometry(.9, .33, .07, 2, .04), mat(0x214d4a), 0, 2.05, -.15, false);
   root.add(sign);
-  const labelCanvas = offscreen(256, 96);
-  const ctx = labelCanvas.getContext('2d');
-  ctx.fillStyle = '#fff4d1';
-  ctx.textAlign = 'center';
-  ctx.font = '700 45px sans-serif';
-  ctx.fillText('小屋门', 128, 65);
-  const texture = new THREE.CanvasTexture(labelCanvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: true }));
-  label.position.set(0, 2.05, -.21);
-  label.scale.set(1.5, .56, 1);
-  root.add(label);
-  root.add(mesh(new THREE.BoxGeometry(1.25, 2.05, .35), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }), 0, 1.05, 0, false));
+  hutDoorLabel = createActionLabel('小屋 · 开门', 2.5);
+  hutDoorLabel.position.set(0, 2.48, -.35);
+  root.add(hutDoorLabel);
+  root.add(mesh(new THREE.BoxGeometry(1.5, 2.4, .65), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }), 0, 1.2, -.08, false));
   scene.add(root);
+}
+
+function createActionLabel(text, width) {
+  const canvas = offscreen(320, 100);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  // Labels are click targets. Keep their text legible above roofs and walls.
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true,
+    depthTest: false, depthWrite: false }));
+  sprite.renderOrder = 100;
+  sprite.scale.set(width, width * canvas.height / canvas.width, 1);
+  sprite.userData.actionLabel = { canvas, texture, text: '' };
+  paintActionLabel(sprite, text);
+  return sprite;
+}
+
+function paintActionLabel(sprite, text) {
+  const label = sprite.userData.actionLabel;
+  if (label.text === text) return;
+  label.text = text;
+  const ctx = label.canvas.getContext('2d');
+  ctx.clearRect(0, 0, 320, 100);
+  ctx.fillStyle = 'rgba(5,48,53,.96)';
+  roundRect(ctx, 3, 3, 314, 94, 18);
+  ctx.strokeStyle = '#f1cf82'; ctx.lineWidth = 3; ctx.stroke();
+  ctx.fillStyle = '#fff4d1'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = '700 43px sans-serif';
+  ctx.fillText(text, 160, 52, 290);
+  label.texture.needsUpdate = true;
+}
+
+function createCookingStation() {
+  const root = actionRoot(new THREE.Group(), { type: 'kitchen' });
+  root.position.set(KITCHEN_SITE.x, groundHeightAt(KITCHEN_SITE.x, KITCHEN_SITE.z), KITCHEN_SITE.z);
+  root.add(mesh(new RoundedBoxGeometry(1.1, .65, .85, 2, .07), mat(0x9c8870), 0, .32, 0));
+  root.add(mesh(new THREE.CylinderGeometry(.34, .29, .26, 16), mat(0x374e4a, .5), 0, .77, 0));
+  const broth = mesh(new THREE.CircleGeometry(.30, 20), mat(0xdca951), 0, .91, 0, false);
+  broth.rotation.x = -Math.PI / 2; root.add(broth);
+  for (const x of [-.4, .4]) root.add(mesh(new THREE.BoxGeometry(.2, .06, .09), materials.wood, x, .83, 0, false));
+  const steam = [];
+  for (let i = 0; i < 5; i++) {
+    const puff = mesh(new THREE.SphereGeometry(.065, 8, 6), new THREE.MeshBasicMaterial({ color: 0xfff3d6, transparent: true, opacity: .45, depthWrite: false }), 0, 1, 0, false);
+    root.add(puff); steam.push(puff);
+  }
+  const image = offscreen(256, 96), ctx = image.getContext('2d');
+  ctx.fillStyle = '#204e47'; roundRect(ctx, 4, 4, 248, 88, 12);
+  ctx.fillStyle = '#ffe3a6'; ctx.font = '700 44px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('海岛厨房', 128, 64);
+  const texture = new THREE.CanvasTexture(image); texture.colorSpace = THREE.SRGBColorSpace;
+  const sign = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true }));
+  sign.position.set(0, 1.65, 0); sign.scale.set(1.65, .62, 1); root.add(sign);
+  root.add(mesh(new THREE.BoxGeometry(1.25, 1.2, 1), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }), 0, .6, 0, false));
+  walkObstacles.push({ ...KITCHEN_SITE, r: .72 });
+  scene.add(root); visualProps.kitchen = { root, steam };
+}
+
+function cookingFailure(reason) {
+  return ({ locked: '先学会这道菜谱', ingredients: '食材不足，请收获或捕获后再来；仓库食材需先取回',
+    capacity: '制作后背包仍会超量，请先整理背包', gold: '金币不足', practice: '熟练度不足，先制作更多份料理',
+    'max-level': '菜谱已满级', known: '已经学会这道菜谱' })[reason] || '暂时不能制作这道料理';
+}
+
+function beginCooking(recipeId) {
+  if (busyAction || hutCrossing || fishingSession || boatTrip || voyage?.engaged) { flash('请先完成当前动作并返回家园'); return; }
+  if (storm.phase === 'impact' && !state.shelter.inside) { flash('台风登陆中，请先进入小屋避险'); return; }
+  if (!state.built.hut || state.hutDurability <= 0) { flash('小屋已损坏，请先维修厨房'); return; }
+  if (!state.shelter.inside && (marineMode !== 'land' || Math.hypot(avatar.position.x - KITCHEN_APPROACH.x, avatar.position.z - KITCHEN_APPROACH.z) > 1.5)) {
+    flash('先走到小屋旁的海岛厨房'); return;
+  }
+  const quote = recipeQuote(state, recipeId);
+  if (!quote.ok) { flash(cookingFailure(quote.reason)); return; }
+  avatarTarget = null; avatarRoute = []; arrivalAction = null;
+  selectedRecipeId = recipeId;
+  kitchenPage = Math.floor(Object.keys(RECIPES).indexOf(recipeId) / 4);
+  cookingJob = { recipeId, elapsed: 0, duration: 5 };
+  busyAction = true; hudPage = 'kitchen'; hudOpen = true;
+  playAvatarAction('hand');
+  if (!state.shelter.inside) avatar.rotation.y = Math.atan2(KITCHEN_SITE.x - avatar.position.x, KITCHEN_SITE.z - avatar.position.z);
+  flash(`正在制作${RECIPES[recipeId].name}，完成后装入背包`);
+}
+
+function updateCooking(deltaSeconds) {
+  if (visualProps.kitchen) visualProps.kitchen.steam.forEach((puff, i) => {
+    puff.visible = Boolean(cookingJob) && !state.shelter.inside;
+    const phase = ((cookingJob?.elapsed || 0) * .5 + i / 5) % 1;
+    puff.position.set(Math.sin(i * 2 + phase) * .15, 1 + phase * .65, Math.cos(i * 2) * .12);
+    puff.scale.setScalar(.6 + phase * 1.6); puff.material.opacity = (1 - phase) * .45;
+  });
+  if (!cookingJob) return;
+  if (state.hutDurability <= 0 || (storm.phase === 'impact' && !state.shelter.inside)) {
+    cookingJob = null; busyAction = false; flash('风灾中断烹饪，食材没有扣除；请先进入小屋避险'); return;
+  }
+  cookingJob.elapsed = Math.min(cookingJob.duration, cookingJob.elapsed + deltaSeconds);
+  if (cookingJob.elapsed < cookingJob.duration) return;
+  const result = cookMeal(state, cookingJob.recipeId);
+  cookingJob = null; busyAction = false;
+  flash(result.ok ? `${result.dish.name} Lv.${result.dish.level} 已入背包 · 食用可补 ${result.dish.satiety} 饱腹` : cookingFailure(result.reason));
+  saveState(state);
+}
+
+function handleKitchenAction(id) {
+  if (cookingJob || busyAction || hutCrossing || fishingSession) { flash('请先完成当前动作'); return; }
+  if (id.startsWith('kitchen-select:')) { selectedRecipeId = id.slice(15); drawHud(); return; }
+  if (id === 'kitchen-prev' || id === 'kitchen-next') {
+    kitchenPage = 1 - kitchenPage;
+    selectedRecipeId = Object.keys(RECIPES)[kitchenPage * 4]; drawHud(); return;
+  }
+  if (id === 'kitchen-learn' || id === 'kitchen-upgrade') {
+    const result = id === 'kitchen-learn' ? learnRecipe(state, selectedRecipeId) : upgradeRecipe(state, selectedRecipeId);
+    flash(result.ok ? `${RECIPES[selectedRecipeId].name} · 已${id === 'kitchen-learn' ? '学会' : '升级'} Lv.${result.level}` : cookingFailure(result.reason));
+    saveState(state); return;
+  }
+  if (id === 'kitchen-eat') {
+    const itemId = Object.keys(DISHES).find((key) => state.inventory[key] > 0) || 'food';
+    useInventoryItem(itemId); return;
+  }
+  if (id === 'kitchen-cook') {
+    const quote = recipeQuote(state, selectedRecipeId);
+    if (!quote.ok) { flash(cookingFailure(quote.reason)); return; }
+    if (state.shelter.inside || (!voyage?.engaged && marineMode === 'land'
+      && Math.hypot(avatar.position.x - KITCHEN_APPROACH.x, avatar.position.z - KITCHEN_APPROACH.z) <= 1.5)) beginCooking(selectedRecipeId);
+    else {
+      if (voyage?.engaged) { flash('请先返航靠岸，在家园厨房制作食物'); return; }
+      if (storm.phase === 'impact') { flash('台风登陆中，请先进入小屋避险'); return; }
+      hudOpen = false;
+      if (walkTo(KITCHEN_APPROACH.x, KITCHEN_APPROACH.z, { type: 'cook', recipeId: selectedRecipeId }, .3)) flash('正在前往海岛厨房，抵达后制作料理');
+    }
+  }
 }
 
 function createTradeSign() {
@@ -2183,14 +2447,32 @@ function showBuilding(kind) {
     }
     model.traverse((object) => {
       if (object.name.startsWith('HutRoof')) hutRoofs.push(object);
+      if (/^Hut_Bed(Base|Quilt|Pillow)/.test(object.name)) {
+        actionRoot(object, { type: 'hut-bed' });
+        if (object.name === 'Hut_BedBase') hutBed = object;
+      }
     });
+    // The shipped GLB merges furniture into Hut.001. Match the source bed's
+    // footprint without regenerating or replacing the user's building asset.
+    if (!hutBed) {
+      hutBed = actionRoot(mesh(new THREE.BoxGeometry(1.34, .55, 1.94),
+        new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }), -1.05, .35, -.5, false), { type: 'hut-bed' });
+      model.add(hutBed);
+    }
+    const bedLabel = actionRoot(createActionLabel('床位 · 休息', 2.5), { type: 'hut-bed' });
+    bedLabel.position.set(-1.05, 1.4, -.5);
+    bedLabel.visible = state.shelter.inside;
+    bedLabel.userData.indoorBedLabel = true;
+    model.add(bedLabel);
   }
   data.built = model;
   animated.push({ object: model, grow: true, target: 1 });
 }
 
 function completeArrival(action) {
+  if (action?.type === 'cook') { beginCooking(action.recipeId); return; }
   if (!action || (storm.phase === 'impact' && !['hut-door-open', 'hut-door-close'].includes(action.type))) return;
+  if (action.type === 'voyage-board') { voyage?.board(); return; }
   if (action.type === 'hut-door-open') {
     state.shelter.doorOpen = true;
     flash('小屋门已打开 · 再点门进入，进屋后记得关门');
@@ -2198,7 +2480,7 @@ function completeArrival(action) {
     drawHud();
     return;
   }
-  if (action.type === 'hut-door-close') { closeHutDoorOutside(); return; }
+  if (action.type === 'hut-door-close') { closeHutDoor(); return; }
   let tool = action.type === 'tree-work' ? action.operation === 'chop' ? 'axe' : 'wateringCan'
     : action.type === 'farm-arrive' || action.type === 'install' || action.type === 'repair' || action.type === 'wood-patch' ? 'shovel'
     : action.type === 'capture' || action.type === 'sea-capture' ? (action.tool === 'dive' ? 'diveCatch' : action.speciesId === 'crab' ? 'hand' : action.tool === 'net' ? 'net' : 'rod')
@@ -2233,6 +2515,7 @@ function completeArrival(action) {
     } else if (data.type === 'farmplot') {
       const plot = state.plots?.find((entry) => entry.id === data.plotId);
       if (!plot) return;
+      selectedPlotId = plot.id;
       const crop = CROPS[plot.crop?.id];
       if (plot.crop && crop && plot.crop.growthMinutes >= crop.minutes) {
         const result = harvestCrop(state, data.plotId);
@@ -2258,7 +2541,7 @@ function completeArrival(action) {
         flash(result.ok ? `浇水完成，${crop.label}继续生长 · 水壶剩余 ${state.freshwater.canteen} L`
           : result.reason === 'water' ? '水壶已空，请先到淡水收集场补水'
             : `现在不能浇水：${result.reason || '体力不足'}`);
-      } else flash(`${cropLabel(plot.crop.id)}生长中 ${Math.floor((plot.crop.growthMinutes || 0) / (crop?.minutes || 1) * 100)}%`);
+      } else { const hint = plotGuidance(state, plot, selectedSeed); flash(`${hint.status} · ${hint.detail}`); }
       refreshFarmBeds();
     }
   } else if (action.type === 'tree-work') {
@@ -2368,12 +2651,8 @@ function completeArrival(action) {
   } else if (action.type === 'farm-arrive') {
     flash('走近田块，点击泥垄播种、浇水或收获');
   } else if (action.type === 'rest') {
-    if (state.satiety < 20) {
-      flash('饱腹不足，先用鱼获或农作物准备一餐，再回小屋休息');
-      return;
-    }
     const recoveryCap = restRecoveryCap(state);
-    const plan = planRest(state.gameMinutes, state.stamina, state.storm?.impactAt, recoveryCap);
+    const plan = bedRestPlan({ ...state, recoveryCap }, Boolean(restTransition));
     if (!plan.ok) {
       flash(restUnavailableMessage(plan.reason));
       return;
@@ -2382,8 +2661,11 @@ function completeArrival(action) {
       flash('途中已跨过昼夜时段，请重新选择休息方式');
       return;
     }
-    restTransition = { ...plan, recoveryCap, fromMinutes: state.gameMinutes, initialStamina: state.stamina, elapsed: 0,
-      duration: plan.kind === 'nap' ? 2.8 : 5.2 };
+    restTransition = { ...plan, recoveryCap, fromMinutes: state.gameMinutes, initialStamina: state.stamina, elapsed: 0, nutritionSpent: 0, savedElapsed: 0,
+      standingPosition: avatar.position.clone(), standingRotation: avatar.rotation.clone() };
+    const bedPosition = hutBed.getWorldPosition(new THREE.Vector3());
+    avatar.position.set(bedPosition.x, bedPosition.y + .28, bedPosition.z + .55);
+    avatar.rotation.set(-Math.PI / 2, 0, 0);
     busyAction = true;
     hudOpen = false;
     flash(plan.kind === 'nap' ? '正在小憩 · 最多 90 游戏分钟恢复体力' : '已回小屋休息 · 时间将逐步推进到清晨');
@@ -2394,8 +2676,54 @@ function completeArrival(action) {
 }
 
 function restUnavailableMessage(reason) {
+  if (reason === 'outside') return '先进入小屋，才能使用床位休息';
+  if (reason === 'door') return '请先关闭小屋门，再上床休息';
+  if (reason === 'food') return '饱腹不足，先食用背包中的鱼获或农作物';
+  if (reason === 'nutrition') return '食物或淡水不足，已达到当前恢复上限；请先吃饭、喝水';
+  if (reason === 'busy') return '请先完成当前动作';
   return reason === 'full' ? '白天体力已满，无需休息；傍晚后可睡到清晨'
     : reason === 'storm' ? '台风预警期间不能休息，请先检查防灾措施' : '当前时间无法休息';
+}
+
+function requestBedRest() {
+  const plan = bedRestPlan({ ...state, recoveryCap: restRecoveryCap(state) },
+    Boolean(busyAction || hutCrossing || bedApproach || restTransition || fishingSession || cookingJob));
+  if (!plan.ok) { flash(restUnavailableMessage(plan.reason)); return; }
+  if (!hutBed || !avatar) { flash('床位正在准备，请稍后再试'); return; }
+  const bed = hutBed.getWorldPosition(new THREE.Vector3());
+  bedApproach = { start: avatar.position.clone(), end: new THREE.Vector3(bed.x + .85, avatar.position.y, bed.z), elapsed: 0 };
+  avatarTarget = null;
+  avatarRoute = [];
+  arrivalAction = null;
+  busyAction = true;
+  hudOpen = false;
+  flash('正在走到床边');
+  drawHud();
+}
+
+function restPreviewText() {
+  const cap = restRecoveryCap(state);
+  const plan = bedRestPlan({ ...state, recoveryCap: cap });
+  if (!plan.ok) return restUnavailableMessage(plan.reason);
+  const preview = restPreview(plan, state.gameMinutes, state.stamina, cap, PASSIVE_TIME_SCALE * 2);
+  return `${Math.ceil(preview.gameMinutes)} 游戏分钟 / 现实 ${Math.ceil(preview.realSeconds / 60)} 分钟 · 体力 +${Math.floor(preview.staminaGain)} · 随时起床`;
+}
+
+function updateBedApproach(deltaSeconds) {
+  if (!bedApproach) return;
+  const approach = bedApproach;
+  approach.elapsed += deltaSeconds;
+  const progress = Math.min(1, approach.elapsed / 1.2);
+  avatar.position.lerpVectors(approach.start, approach.end, progress);
+  avatar.rotation.y = Math.atan2(approach.end.x - approach.start.x, approach.end.z - approach.start.z);
+  const limbs = avatar.userData.limbs;
+  limbs.leftLeg.rotation.x = Math.sin(progress * Math.PI * 6) * .3;
+  limbs.rightLeg.rotation.x = -limbs.leftLeg.rotation.x;
+  if (progress < 1) return;
+  limbs.leftLeg.rotation.x = limbs.rightLeg.rotation.x = 0;
+  bedApproach = null;
+  busyAction = false;
+  completeArrival({ type: 'rest' });
 }
 
 function stableRoll(key) {
@@ -2487,11 +2815,11 @@ hudScene.add(hudSprite);
 let hudWidth = 0;
 let hudHeight = 0;
 let hudButtons = [];
-let hudOpen = false;
+let hudOpen = state.shelter.inside;
 let hudPanelRect = null;
 let hudNavRect = null;
 let hudContentOffset = 0;
-const statusCanvas = offscreen(768, 112);
+const statusCanvas = offscreen(768, 146);
 const statusTexture = new THREE.CanvasTexture(statusCanvas);
 statusTexture.colorSpace = THREE.SRGBColorSpace;
 const statusSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: statusTexture, transparent: true, depthTest: false }));
@@ -2512,7 +2840,7 @@ const navSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: navTexture, t
 navSprite.center.set(.5, 0);
 hudScene.add(navSprite);
 let navButtons = [];
-const fishingCanvas = offscreen(760, 350);
+const fishingCanvas = offscreen(760, 520);
 const fishingTexture = new THREE.CanvasTexture(fishingCanvas);
 fishingTexture.colorSpace = THREE.SRGBColorSpace;
 const fishingSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: fishingTexture, transparent: true, depthTest: false }));
@@ -2521,11 +2849,12 @@ fishingSprite.renderOrder = 25;
 hudScene.add(fishingSprite);
 let fishingRect = null;
 let fishingButtons = [];
+let fishingForceRect = null;
 const restShade = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0x001b24, transparent: true, opacity: .42, depthTest: false }));
 restShade.renderOrder = 28;
 restShade.visible = false;
 hudScene.add(restShade);
-const restCanvas = offscreen(640, 200);
+const restCanvas = offscreen(640, 280);
 const restTexture = new THREE.CanvasTexture(restCanvas);
 restTexture.colorSpace = THREE.SRGBColorSpace;
 const restSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: restTexture, transparent: true, depthTest: false }));
@@ -2540,9 +2869,9 @@ function roundRect(context, x, y, width, height, radius) {
 }
 
 function drawFishingPanel() {
-  const session = fishingSession;
+  const session = fishingSession || fishingResult;
   fishingSprite.visible = Boolean(session);
-  if (!session) { fishingButtons = []; return; }
+  if (!session) { fishingButtons = []; fishingForceRect = null; return; }
   const mobile = screen.width < 600;
   const width = Math.min(screen.width - 16, mobile ? 500 : 510);
   const height = width * fishingCanvas.height / fishingCanvas.width;
@@ -2558,20 +2887,35 @@ function drawFishingPanel() {
   fishingSprite.scale.set(width, height, 1);
   fishingSprite.position.set(fishingRect.x + width / 2, screen.height - fishingRect.y - height / 2, 0);
   const ctx = fishingCanvas.getContext('2d');
-  ctx.clearRect(0, 0, 760, 350);
+  ctx.clearRect(0, 0, 760, 520);
   ctx.fillStyle = 'rgba(4, 40, 49, .95)';
-  roundRect(ctx, 5, 5, 750, 340, 26);
+  roundRect(ctx, 5, 5, 750, 510, 26);
   ctx.strokeStyle = '#dfc47f'; ctx.lineWidth = 3;
-  ctx.strokeRect(15, 15, 730, 320);
+  ctx.strokeRect(15, 15, 730, 490);
+  if (session.phase === 'result') {
+    fishingButtons = []; fishingForceRect = null;
+    ctx.textAlign = 'left'; ctx.fillStyle = '#fff1c8'; ctx.font = '700 35px sans-serif';
+    ctx.fillText(`${SEAFOOD[session.speciesId].label} · 本次垂钓结束`, 38, 72, 680);
+    ctx.font = '27px sans-serif'; ctx.fillStyle = '#ffdb82';
+    ctx.fillText(session.explanation, 38, 143, 680);
+    ctx.fillStyle = '#c4ebe0'; ctx.font = '25px sans-serif';
+    ctx.fillText(`本次消耗：体力 ${session.penalty.stamina} · ${session.penalty.minutes} 游戏分钟`, 38, 212, 680);
+    ctx.fillText(session.tip, 38, 294, 680);
+    ctx.fillText('这处鱼群需要恢复，换一个目标可继续垂钓', 38, 350, 680);
+    ctx.fillStyle = '#fff1c8'; ctx.fillText('点击任意位置关闭，继续操作', 38, 454, 680);
+    fishingTexture.needsUpdate = true;
+    return;
+  }
   const bite = session.phase === 'bite';
   const reeling = session.phase === 'reeling';
   ctx.textAlign = 'left';
   ctx.fillStyle = '#fff1c8'; ctx.font = '700 35px sans-serif';
   ctx.fillText(`${SEAFOOD[session.speciesId].label} · ${reeling ? '收线中' : bite ? '鱼已咬钩' : session.phase === 'casting' ? '抛竿中' : '等待咬钩'}`, 38, 63, 680);
   ctx.font = '24px sans-serif'; ctx.fillStyle = bite ? '#ffdb82' : '#c4ebe0';
-  ctx.fillText(reeling ? `鱼的动作：${({ light: '猛冲，轻收', steady: '平游，稳收', strong: '松劲，快收' })[fishingCue(session)]} · 当前 ${FISHING_FORCE_LABELS[session.force]}`
+  ctx.fillText(reeling ? `鱼的动作：${({ light: '猛冲，轻收', steady: '平游，稳收', strong: '松劲，快收' })[fishingCue(session)]} · ${session.assisted ? '辅助收线中' : '让指针留在绿色区域'}`
     : bite ? '浮漂下沉！在黄色时间条结束前提竿' : '观察水面浮漂；未咬钩就提竿会惊走鱼', 38, 105, 680);
   fishingButtons = [];
+  fishingForceRect = null;
   const button = (id, x, y, w, h, label, fill) => {
     ctx.fillStyle = fill; roundRect(ctx, x, y, w, h, 18);
     ctx.fillStyle = '#fff8df'; ctx.font = '700 31px sans-serif'; ctx.textAlign = 'center';
@@ -2579,19 +2923,37 @@ function drawFishingPanel() {
     fishingButtons.push({ id, x, y, width: w, height: h });
   };
   if (reeling) {
+    const guide = fishingForceGuide(session);
     ctx.textAlign = 'left'; ctx.font = '23px sans-serif'; ctx.fillStyle = '#e6f4e5';
-    ctx.fillText(`收线 ${Math.floor(session.progress * 100)}%`, 40, 143);
-    ctx.fillText(`鱼线受力 ${Math.floor(session.strain * 100)}%`, 40, 208);
-    ctx.fillStyle = '#276467'; roundRect(ctx, 225, 124, 485, 24, 12);
-    ctx.fillStyle = '#9bdf9d'; roundRect(ctx, 225, 124, Math.max(7, 485 * session.progress), 24, 12);
-    ctx.fillStyle = '#276467'; roundRect(ctx, 225, 190, 485, 24, 12);
+    ctx.fillText(`收线 ${Math.floor(session.progress * 100)}%`, 40, 145);
+    ctx.fillText(`鱼线受力 ${Math.floor(session.strain * 100)}%`, 402, 145);
+    ctx.fillStyle = '#276467'; roundRect(ctx, 40, 158, 315, 20, 10);
+    ctx.fillStyle = '#9bdf9d'; roundRect(ctx, 40, 158, Math.max(7, 315 * session.progress), 20, 10);
+    ctx.fillStyle = '#276467'; roundRect(ctx, 402, 158, 315, 20, 10);
     ctx.fillStyle = session.strain > .72 ? '#ee8163' : '#e3bf69';
-    roundRect(ctx, 225, 190, Math.max(7, 485 * session.strain), 24, 12);
+    roundRect(ctx, 402, 158, Math.max(7, 315 * session.strain), 20, 10);
+    ctx.fillStyle = '#fff1c8'; ctx.font = '700 28px sans-serif';
+    ctx.fillText(`力度 ${Math.round(session.forceValue * 100)}%`, 40, 221);
+    ctx.fillStyle = '#a9ddc5'; ctx.font = '23px sans-serif';
+    ctx.fillText(`安全 ${Math.round(guide.min * 100)}–${Math.round(guide.max * 100)}%`, 247, 221);
+    ctx.fillText(`${guide.seconds.toFixed(1)}秒后 ${FISHING_FORCE_LABELS[guide.next]}`, 508, 221);
+    button('force-down', 38, 234, 92, 92, '−5%', '#356f72');
+    button('force-up', 632, 234, 92, 92, '+5%', '#356f72');
+    fishingForceRect = { x: 145, y: 234, width: 470, height: 92 };
+    ctx.fillStyle = '#725e51'; roundRect(ctx, 145, 261, 470, 35, 17);
+    ctx.fillStyle = '#68bc93'; roundRect(ctx, 145 + 470 * guide.min, 261, 470 * (guide.max - guide.min), 35, 12);
+    ctx.fillStyle = '#d9f8be'; ctx.fillRect(145 + 470 * guide.target - 2, 264, 4, 29);
+    const knob = 145 + session.forceValue * 470;
+    ctx.fillStyle = '#fff8de'; roundRect(ctx, knob - 9, 251, 18, 56, 8);
+    ctx.textAlign = 'center'; ctx.fillStyle = '#c1d5c9'; ctx.font = '22px sans-serif';
+    for (const percent of [0, 25, 50, 75, 100]) ctx.fillText(`${percent}%`, 145 + percent / 100 * 470, 345);
     for (const [index, force] of ['light', 'steady', 'strong'].entries()) {
-      button(force, 31 + index * 243, 248, 214, 87,
-        `${index + 1} ${FISHING_FORCE_LABELS[force]}`,
-        session.force === force ? '#b28636' : '#287974');
+      button(force, 38 + index * 171, 365, 154, 92, `${FISHING_FORCE_LABELS[force]} ${[25, 50, 75][index]}%`,
+        !session.assisted && session.force === force ? '#b28636' : '#287974');
     }
+    button('assist', 551, 365, 171, 92, session.assisted ? '辅助：开' : '辅助：关', session.assisted ? '#a07839' : '#466568');
+    ctx.textAlign = 'left'; ctx.fillStyle = '#b9d8ce'; ctx.font = '22px sans-serif';
+    ctx.fillText('拖动力度条 · ← / → 微调 · 开辅助可跟随推荐', 40, 496, 680);
   } else {
     const remaining = bite ? Math.max(0, 1 - (session.elapsed - session.biteAt) / session.biteWindow) : 0;
     ctx.fillStyle = '#1d5a60'; roundRect(ctx, 40, 144, 680, 31, 15);
@@ -2600,18 +2962,35 @@ function drawFishingPanel() {
     ctx.textAlign = 'left'; ctx.font = '23px sans-serif'; ctx.fillStyle = '#d7e9df';
     ctx.fillText(bite ? `剩余 ${(session.biteWindow * remaining).toFixed(1)} 秒 · 看准浮漂下沉再提竿`
       : '轻晃不是咬钩；突然下沉才是时机', 40, 218, 680);
-    button('hook', 35, 248, 475, 87, '提竿 · 空格 / 点击', bite ? '#b88737' : '#427c78');
-    button('cancel', 525, 248, 200, 87, '收竿取消', '#745f53');
+    button('hook', 35, 283, 475, 105, '提竿 · 空格 / 点击', bite ? '#b88737' : '#427c78');
+    button('cancel', 525, 283, 200, 105, '收竿取消', '#745f53');
+    ctx.textAlign = 'left'; ctx.fillStyle = '#b9d8ce'; ctx.font = '24px sans-serif';
+    ctx.fillText('咬钩后可拖动力度条，也可开启辅助收线', 40, 443, 680);
   }
   fishingTexture.needsUpdate = true;
 }
 
+function dragFishingForce(x, y, continuing = false) {
+  if (!fishingSession || fishingSession.phase !== 'reeling' || !fishingRect || !fishingForceRect) return false;
+  const localX = (x - fishingRect.x) * fishingCanvas.width / fishingRect.width;
+  const localY = (y - fishingRect.y) * fishingCanvas.height / fishingRect.height;
+  const track = fishingForceRect;
+  if (!continuing && (localX < track.x || localX > track.x + track.width || localY < track.y || localY > track.y + track.height)) return false;
+  setFishingForce(fishingSession, (localX - track.x) / track.width);
+  drawFishingPanel(); return true;
+}
+
 function handleFishingTap(x, y) {
+  if (fishingResult && !fishingSession) {
+    fishingResult = null; fishingSprite.visible = false; fishingRect = null;
+    return false;
+  }
   if (!fishingSession) return false;
   if (!fishingRect || x < fishingRect.x || x > fishingRect.x + fishingRect.width
     || y < fishingRect.y || y > fishingRect.y + fishingRect.height) return true;
   const localX = (x - fishingRect.x) * fishingCanvas.width / fishingRect.width;
   const localY = (y - fishingRect.y) * fishingCanvas.height / fishingRect.height;
+  if (dragFishingForce(x, y)) return true;
   const hit = fishingButtons.find((item) => localX >= item.x && localX <= item.x + item.width
     && localY >= item.y && localY <= item.y + item.height);
   if (hit) handleFishingAction(hit.id);
@@ -2625,15 +3004,18 @@ function updateRestTransition(deltaSeconds) {
     return;
   }
   const rest = restTransition;
-  rest.elapsed = Math.min(rest.duration, rest.elapsed + deltaSeconds);
-  const progress = rest.elapsed / rest.duration;
-  const reachedMinutes = rest.fromMinutes + (rest.targetMinutes - rest.fromMinutes) * progress;
+  const { progress, minutes: reachedMinutes, stamina } = restProgress(rest, deltaSeconds, PASSIVE_TIME_SCALE * 2);
   advanceGameTime(state, Math.max(0, reachedMinutes - state.gameMinutes) / 2);
-  state.stamina = Math.min(rest.recoveryCap, Math.max(state.stamina, rest.initialStamina + rest.staminaGain * progress));
+  const nutritionDue = restNutritionCost(rest.kind, progress);
+  state.satiety = Math.max(0, state.satiety - (nutritionDue - rest.nutritionSpent));
+  rest.nutritionSpent = nutritionDue;
+  rest.recoveryCap = Math.min(rest.recoveryCap, restRecoveryCap(state));
+  state.stamina = Math.min(rest.recoveryCap, Math.max(state.stamina, stamina));
+  if (rest.elapsed - rest.savedElapsed >= 10) { saveState(state); rest.savedElapsed = rest.elapsed; }
   const ctx = restCanvas.getContext('2d');
-  ctx.clearRect(0, 0, 640, 200);
+  ctx.clearRect(0, 0, 640, 280);
   ctx.fillStyle = 'rgba(5,39,44,.97)';
-  roundRect(ctx, 12, 12, 616, 176, 25);
+  roundRect(ctx, 12, 12, 616, 256, 25);
   ctx.strokeStyle = '#ead38f';
   ctx.lineWidth = 3;
   ctx.stroke();
@@ -2648,41 +3030,56 @@ function updateRestTransition(deltaSeconds) {
   roundRect(ctx, 64, 138, 512, 22, 11);
   ctx.fillStyle = '#b7dda2';
   roundRect(ctx, 64, 138, Math.max(10, 512 * progress), 22, 11);
+  const secondsLeft = Math.ceil((rest.targetMinutes - reachedMinutes) / (PASSIVE_TIME_SCALE * 2));
+  ctx.fillStyle = '#fff1d0'; ctx.font = '20px sans-serif';
+  ctx.fillText(`剩余 ${Math.ceil(rest.targetMinutes - reachedMinutes)} 游戏分钟 · 现实 ${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, '0')}`, 320, 188);
+  ctx.fillStyle = '#397459'; roundRect(ctx, 200, 205, 240, 48, 12);
+  ctx.fillStyle = '#ffffff'; ctx.font = '700 24px sans-serif'; ctx.fillText('起床 · 保留已恢复体力', 320, 237);
   restTexture.needsUpdate = true;
-  restShade.visible = true;
-  restSprite.visible = true;
+  restShade.visible = !hudOpen && !voyage?.mapOpen;
+  restSprite.visible = !voyage?.mapOpen;
+  restSprite.position.y = screen.height * (hudOpen ? .8 : .2);
   if (progress < 1) return;
-  state.stamina = Math.min(rest.recoveryCap, Math.round(state.stamina));
-  consumeRestNutrition(state, rest.kind);
+  finishBedRest(false);
+}
+
+function finishBedRest(early = true) {
+  if (!restTransition) return;
+  const rest = restTransition;
+  avatar.position.copy(rest.standingPosition);
+  avatar.rotation.copy(rest.standingRotation);
   restTransition = null;
   busyAction = false;
   restShade.visible = false;
   restSprite.visible = false;
-  flash(rest.interruptedByStorm ? '休息到台风预警时刻；请立即检查防灾措施'
+  flash(early ? `已经起床 · 恢复 ${Math.floor(Math.max(0, state.stamina - rest.initialStamina))} 体力 · 按实际休息扣除营养`
+    : rest.interruptedByStorm ? '休息到台风预警时刻；请立即检查防灾措施'
     : rest.kind === 'nap' ? `小憩结束，体力有所恢复 · 饱腹 ${Math.floor(state.satiety)}/100`
       : `睡到清晨 06:00，体力已恢复 · 饱腹 ${Math.floor(state.satiety)}/100`);
   saveState(state);
+  drawHud();
 }
 
 function drawHud() {
   const narrowHud = screen.width < 600;
   const tallPage = hudPage === 'logistics' || hudPage === 'inventory';
-  const contentHeight = hudPage === 'shop' ? (narrowHud ? MOBILE_HUD_HEIGHT : HUD_HEIGHT)
+  const contentHeight = hudPage === 'kitchen' ? (narrowHud ? COOKING_MOBILE_HEIGHT : HUD_HEIGHT)
+    : hudPage === 'shop' ? (narrowHud ? MOBILE_HUD_HEIGHT : HUD_HEIGHT)
     : hudPage === 'logistics' ? (narrowHud ? 690 : 700)
       : hudPage === 'inventory' ? (narrowHud ? 900 : 650)
-        : hudPage === 'activity' ? (narrowHud ? 950 : 700)
+        : hudPage === 'activity' ? (state.shelter.inside ? (narrowHud ? 560 : 420) : narrowHud ? 950 : 700)
           : hudPage === 'water' ? (narrowHud ? 690 : 560)
         : narrowHud ? (tallPage ? 820 : 690) : (tallPage ? 560 : 420);
   hudContentOffset = hudCanvas.height - contentHeight;
   if (hudNavRect) {
     const defaultWidth = Math.min(screen.width - (narrowHud ? 16 : 32), narrowHud ? 440 : 520);
     const availableHeight = Math.max(280, hudNavRect.y - (narrowHud ? 16 : 20));
-    hudWidth = hudPage === 'shop'
+    hudWidth = hudPage === 'shop' || hudPage === 'kitchen'
       ? Math.min(screen.width - (narrowHud ? 16 : 32), narrowHud ? 440 : 900,
         availableHeight * HUD_WIDTH / contentHeight)
       : defaultWidth;
     hudHeight = hudWidth * hudCanvas.height / HUD_WIDTH;
-    const panelX = screen.width < 600 || hudPage === 'shop' ? (screen.width - hudWidth) / 2 : screen.width - hudWidth - 16;
+    const panelX = screen.width < 600 || hudPage === 'shop' || hudPage === 'kitchen' ? (screen.width - hudWidth) / 2 : screen.width - hudWidth - 16;
     const visiblePanelHeight = hudWidth * contentHeight / HUD_WIDTH;
     const panelY = hudNavRect.y - visiblePanelHeight - 8;
     hudPanelRect = { x: panelX, y: panelY, width: hudWidth, height: visiblePanelHeight };
@@ -2704,12 +3101,12 @@ function drawHud() {
       ? state.shelter.inside && !state.shelter.doorOpen ? '台风来袭 · 屋内避险' : '台风来袭 · 暴露在风雨中' :
       `第${day}天 ${clockLabel} · ${tideLabel}`;
   const top = statusCanvas.getContext('2d');
-  top.clearRect(0, 0, 768, 112);
+  top.clearRect(0, 0, 768, 146);
   top.fillStyle = 'rgba(5,48,53,.88)';
-  roundRect(top, 4, 4, 760, 104, 24);
+  roundRect(top, 4, 4, 760, 138, 24);
   top.strokeStyle = 'rgba(238,223,137,.64)';
   top.lineWidth = 2;
-  top.strokeRect(12, 12, 744, 88);
+  top.strokeRect(12, 12, 744, 122);
   top.fillStyle = '#fff6d9';
   top.font = '700 27px sans-serif';
   top.fillText('孤岛余生 · 风暴物语', 28, 39);
@@ -2724,14 +3121,19 @@ function drawHud() {
     : state.storm.result ? `　上场损失 ${state.storm.result.totals.itemsLost} 件 · 维修 ${state.storm.result.totals.repairCost} 金`
       : `　鱼获 ${state.fishValue || 0} 金 · 水壶 ${state.freshwater.canteen}/${state.freshwater.canteenCapacity}L · 储水 ${state.freshwater.tank}/${state.freshwater.tankCapacity}L`;
   const statusLabel = storm.phase === 'calm' && !stormReportOpen ? forecast : `${stormLabel}${forecast}`;
-  const marineStatus = marineMode === 'dive'
+  const marineStatus = voyage?.engaged ? (voyage.sailing ? `远航探索 · 船体 ${Math.round(state.boatDurability)}/100 · 已发现 ${state.voyage.discovered.length - 1}/4 座岛 · 海图规划航线` : '岛屿探索 · 点击资源采集，重新登船可返回家园') : marineMode === 'dive'
     ? `潜水剩余 ${Math.ceil(diveSecondsLeft)} 秒 · 当前 ${waterDepthMetres(avatar.position.x, avatar.position.z).toFixed(1)} 米 / 限深 ${diveDepthLimit()} 米`
-    : marineMode === 'swim' ? '水面游泳 · 出海页可下潜 · 点击沙滩返回' : '';
+    : marineMode === 'swim' ? '水面游泳 · 活动页可下潜 · 点击沙滩返回' : '';
   top.fillText(marineStatus || statusLabel, 28, 94, 706);
+  top.fillStyle = '#ffdf8f'; top.font = '600 22px sans-serif';
+  const nextAction = restTransition ? '正在休息 · 可查看背包、农田和海图，随时起床'
+    : ['preparing', 'impact'].includes(storm.phase) ? '当前目标 · 进屋关门避险，检查防灾措施'
+      : nextPlayerAction(state).text;
+  top.fillText(`下一步：${nextAction}`, 28, 124, 706);
   statusTexture.needsUpdate = true;
   statusSprite.visible = !(hudOpen && hudPage === 'shop');
 
-  const tabNames = [['activity', '出海'], ['farm', '农田'], ['inventory', '背包'], ['trees', '林木'], ['storm', stormReportOpen ? '返回防灾' : '防灾'], ['logistics', '维修仓储']];
+  const tabNames = [['activity', '活动'], ['voyage', '航海'], ['farm', '农田'], ['inventory', '背包'], ['kitchen', '烹饪'], ['trees', '林木'], ['storm', stormReportOpen ? '返回防灾' : '防灾'], ['logistics', '维修仓储']];
   if (state.shopLevel >= 2) tabNames.push(['orders', '订单']);
   const nav = navCanvas.getContext('2d');
   nav.clearRect(0, 0, 1000, 112);
@@ -2763,10 +3165,13 @@ function drawHud() {
   ctx.fillStyle = '#fff6d9';
   ctx.font = '700 35px sans-serif';
   ctx.fillText(hudPage === 'shop' ? `码头交易 · ${tradeMode === 'buy' ? '购入' : '售出'}`
+    : hudPage === 'activity' && state.shelter.inside ? '海风小屋'
     : hudPage === 'water' ? '淡水收集场' : tabNames.find(([id]) => id === hudPage)?.[1] || '操作', 45, 75);
   ctx.font = '24px sans-serif';
   ctx.fillStyle = '#b8f4df';
   ctx.fillText(hudPage === 'inventory' ? '选择物品查看价值、等级与状态'
+    : hudPage === 'activity' && state.shelter.inside ? state.shelter.doorOpen ? '门已打开 · 关门避险或选择出屋' : '门已关闭 · 屋内避险，可休息或开门'
+    : hudPage === 'kitchen' ? `金币 ${state.gold} · 学习、制作与升级菜谱 · 在小屋旁烹饪`
     : hudPage === 'water' ? '饮水维持水分 · 清晨结算露水与降雨'
     : hudPage === 'shop' ? `金币 ${state.gold} · ${tradeMode === 'buy' ? '点击商品直接购买' : '点击货物售出该类全部库存'}`
       : '点击场景可移动 / 交互', 45, 112);
@@ -2783,7 +3188,7 @@ function drawHud() {
   const sellableIds = [...Object.keys(SEAFOOD), ...Object.keys(CROPS), 'legacyFish'];
   const sellableCount = sellableIds.reduce((sum, id) => sum + (state.inventory[id] || 0), 0);
   const produceCount = Object.keys(CROPS).reduce((sum, id) => sum + (state.inventory[id] || 0), 0);
-  const edibleCount = [...Object.keys(CROPS), ...Object.keys(SEAFOOD)]
+  const edibleCount = [...Object.keys(DISHES), ...Object.keys(CROPS), ...Object.keys(SEAFOOD)]
     .reduce((sum, id) => sum + (state.inventory[id] || 0), state.food || 0);
   const shopCards = hudPage === 'shop' ? drawTradePanel(ctx, narrowHud, hudContentOffset) : [];
   const report = state.storm?.result;
@@ -2828,6 +3233,9 @@ function drawHud() {
     : nextCrop
     ? `可收 ${readyPlots.length} 块 · ${cropLabel(nextCrop.crop.id)}${nextStage} ${Math.floor(nextProgress * 100)}%`
     : readyPlots.length ? `可收 ${readyPlots.length} 块 · 点击田垄收获` : '空地点击田垄播种';
+  const selectedPlot = state.plots.find(plot => plot.id === selectedPlotId) || readyPlots[0] || thirstyCrop || state.plots[0];
+  const plotHint = plotGuidance(state, selectedPlot, selectedSeed);
+  const selectedPlotIndex = state.plots.indexOf(selectedPlot);
   const stormReportCards = report ? [
     { id: 'storm-report-card-crops', x: columns[0], y: 200, title: `田间损失 · ${reportSummary.plots.unitsLost} 件`, detail: `${reportSummary.plots.count} 块受灾田 · 价值 ${reportSummary.plots.valueLost} 金`, color: '#94702f' },
     { id: 'storm-report-card-stock', x: columns[1], y: 200, title: `库存损失 · ${reportSummary.inventory.unitsLost} 件`, detail: `${stockBreakdown}${stockRowsLost.length > 3 ? ' 等' : ''} · 价值 ${reportSummary.inventory.valueLost} 金`, color: '#765b8b' },
@@ -2842,7 +3250,7 @@ function drawHud() {
     { id: 'storm-report-card-assets', x: columns[0], y: 316, title: '耐久与维修费', detail: '显示船、码头、小屋灾前/灾后状态', color: '#94702f' },
     { id: 'storm-report-card-protection', x: columns[1], y: 316, title: '防护效果', detail: '显示每项已安装设施的磨损变化', color: '#765b8b' },
   ];
-  const definitions = hudPage === 'shop' ? [] : hudPage === 'water' ? [
+  const definitions = hudPage === 'shop' || hudPage === 'kitchen' ? [] : hudPage === 'water' ? [
     { id: 'water-drink', title: `饮用 1 L · 水壶 ${state.freshwater.canteen}/${state.freshwater.canteenCapacity} L`,
       detail: `水分 ${Math.floor(state.freshwater.hydration)}/100 · 低于 25 会限制体力恢复`, color: '#287f74' },
     { id: 'water-refill', title: `从储水桶补水 · ${state.freshwater.tank}/${state.freshwater.tankCapacity} L`,
@@ -2868,20 +3276,22 @@ function drawHud() {
     ...(dailyOrders.length === 1 ? [{ id: 'order-info-next', x: columns[1], y: 200, title: '每日一份混合订单', detail: '无线电商店 Lv.3 可增加第二单', color: '#397459' }] : []),
     { id: 'order-info-pay', x: columns[0], y: 316, title: '交付收益', detail: '按商品正常售价结算，另加订单奖励', color: '#94702f' },
     { id: 'order-info-refresh', x: columns[1], y: 316, title: `已完成 ${state.ordersCompleted} 份`, detail: '每日 06:00 刷新；未完成订单不罚款', color: '#765b8b' },
+  ] : hudPage === 'activity' && state.shelter.inside ? [
+    ...hutControls(state.shelter),
+    { id: 'activity-rest', title: '在小屋休息', detail: restPreviewText(), color: '#765b8b' },
   ] : hudPage === 'activity' ? [
+    ...hutControls(state.shelter),
+    { id: 'activity-voyage', title: '驾驶小船 · 探索群岛', detail: '海图选航线 · 自由驾驶 · 靠岸搜寻淡水和食物', color: '#a37b3a' },
     { id: 'activity-catch', x: columns[0], y: 200, title: `${SEAFOOD[selectedSeafood]?.label || '沙蟹'} · ${SEAFOOD[selectedSeafood]?.tool === 'rod' ? '抛竿垂钓' : '开始采集'}`,
       detail: SEAFOOD[selectedSeafood]?.tool === 'rod' ? '看浮漂提竿 · 跟随鱼的动作控制收线力度'
         : `${SEAFOOD[selectedSeafood]?.depth || '0–2 m'} · 成功率约 ${Math.round((SEAFOOD[selectedSeafood]?.chance || .85) * 100)}%`, color: '#287f74' },
     { id: 'activity-cycle', x: columns[1], y: 200, title: '切换海产目标', detail: '沙蟹 · 珊瑚鱼 · 银鲹 · 龙虾 · 珍珠贝', color: '#467b77' },
     { id: 'sell', x: columns[0], y: 316, title: '返回码头出售', detail: `${sellableCount} 件可售货物 · 果蔬 ${produceCount} 件`, color: '#397459' },
-    { id: 'activity-meal', title: `准备一餐 · 食材 ${edibleCount} 件`,
-      detail: `饱腹 ${Math.floor(state.satiety)}/100 · 吃饱后休息才会恢复体力`, color: '#8a6539' },
+    { id: 'activity-meal', title: `烹饪与菜谱 · 食物 ${edibleCount} 件`,
+      detail: `已做好 ${edibleDishCount(state)} 份 · 料理提升饱腹，吃饱后休息`, color: '#8a6539' },
     marineMode === 'land'
       ? { id: 'activity-rest', x: columns[1], y: 316, title: state.shelter.inside ? '在小屋休息' : '回小屋休息 · 先开门进入',
-        detail: state.satiety < 20 ? '饱腹不足 · 先吃鱼获或农作物'
-          : clock >= 6 && clock < 18
-          ? stamina >= restRecoveryCap(state) ? '当前体力已达可恢复上限' : '白天小憩最多 90 分钟 · 恢复 25 体力'
-          : '夜间逐步休息到清晨 06:00', color: '#765b8b' }
+        detail: restPreviewText(), color: '#765b8b' }
       : { id: 'activity-dive', x: columns[1], y: 316,
         title: marineMode === 'dive' ? '浮出水面' : '下潜探索',
         detail: marineMode === 'dive' ? `剩余 ${Math.ceil(diveSecondsLeft)} 秒 · 自动上浮保命`
@@ -2889,13 +3299,6 @@ function drawHud() {
         color: '#286e8a' },
     ...(state.hasNet ? [{ id: 'activity-net', title: `高级渔网 · 今日 ${state.netUsesDay}/3 次`,
       detail: '先选珊瑚鱼或银鲹 · 一网双次捕获判定', color: '#287f74' }] : []),
-    { id: 'hut-door', title: state.shelter.inside
-      ? state.shelter.doorOpen ? '关门避险' : '开门外出'
-      : state.shelter.doorOpen ? '进入小屋 / 关门' : '走到小屋开门',
-    detail: state.shelter.inside && !state.shelter.doorOpen ? '已安全避险 · 可在屋内休息'
-      : state.shelter.doorOpen ? '点击小屋门进出；再次点击可关门' : '台风前主动进屋，关闭门才能避险', color: '#467b77' },
-    ...(state.shelter.inside && state.shelter.doorOpen ? [{ id: 'hut-exit', title: '走出小屋', detail: '穿过门槛后可从屋外关门', color: '#94702f' }] : []),
-    ...(!state.shelter.inside && state.shelter.doorOpen ? [{ id: 'hut-close', title: '关闭小屋门', detail: '门敞开时即使屋内也无法安全避险', color: '#94702f' }] : []),
   ] : hudPage === 'trees' ? [
     { id: 'tree-chop', x: columns[0], y: 200, title: `砍伐椰树 · ${selectedTree?.stage === 'mature' ? '可砍伐' : '未成熟'}`, detail: '成熟树产 2–4 木材 · 消耗 8 体力', color: '#94702f' },
     { id: 'tree-plant', x: columns[1], y: 200,
@@ -2906,23 +3309,18 @@ function drawHud() {
     { id: 'tree-tend', x: columns[0], y: 316, title: '浇水养护', detail: '每日一次 · 加速 6 小时并恢复健康', color: '#287f74' },
     { id: 'tree-next', x: columns[1], y: 316, title: `查看下一棵 · ${treeIndex + 1}/${state.trees.length}`, detail: `当前 ${treeStatus} · 也可点场景中的树`, color: '#467b77' },
   ] : hudPage === 'farm' ? [
-    { id: 'farm-go', x: columns[0], y: 200, title: `处理田块 · 已种 ${plantedPlots.length}/${state.plots.length}`, detail: farmDetail, color: '#397459' },
+    { id: 'farm-go', x: columns[0], y: 200, title: `${plotHint.action} · 第 ${selectedPlotIndex + 1} 块田 · ${plotHint.status}`, detail: plotHint.detail, color: '#397459' },
     { id: 'farm-seed', x: columns[1], y: 200, title: `切换种子 · ${cropLabel(selectedSeed)} ×${state.inventory[`${selectedSeed}Seed`] || 0}`, detail: '缺货时田地自动改用背包中的农田种子', color: '#94702f' },
     { id: 'farm-buy-seed', x: columns[0], y: 316, title: '购买 1 包种子', detail: `${cropLabel(selectedSeed)} ${CROPS[selectedSeed].seedPrice} 金 · 前往码头`, color: '#94702f' },
-    { id: 'farm-help', x: columns[1], y: 316, title: '田间操作', detail: '空地播种 · 生长期浇水 · 成熟收获', color: '#287f74' },
+    { id: 'farm-help', x: columns[1], y: 316, title: `切换田块 · ${selectedPlotIndex + 1}/${state.plots.length}`, detail: `已种 ${plantedPlots.length}/${state.plots.length} · ${farmDetail}`, color: '#287f74' },
   ] : hudPage === 'storm' && stormReportOpen ? stormReportCards : hudPage === 'storm' ? [
+    ...hutControls(state.shelter),
     { id: 'defense-net', x: columns[0], y: 200, title: '防风网 · 60 金', detail: '一组保护最多 6 块田', color: '#397459' },
     { id: 'defense-drain', x: columns[1], y: 200, title: '排水渠 · 80 金', detail: '减轻台风水损与日常潮害', color: '#397459' },
     { id: 'defense-anchor', x: columns[0], y: 316, title: '加固锚绳 · 70 金', detail: '船只必须回港并完成安装', color: '#467b77' },
     { id: 'storm-report-open', x: columns[1], y: 316, title: '上次台风 · 查看明细', detail: '作物、库存、建筑与防护磨损', color: '#94702f' },
-    { id: 'hut-door', title: state.shelter.inside
-      ? state.shelter.doorOpen ? '关门避险' : '开门外出'
-      : state.shelter.doorOpen ? '进入小屋' : '前往小屋开门',
-    detail: '仅进屋且关门才算安全；屋外累计风雨暴露会损失体力', color: '#467b77' },
-    ...(state.shelter.inside && state.shelter.doorOpen ? [{ id: 'hut-exit', title: '走出小屋', detail: '台风中外出会累计风雨暴露', color: '#94702f' }] : []),
-    ...(!state.shelter.inside && state.shelter.doorOpen ? [{ id: 'hut-close', title: '关闭小屋门', detail: '台风中屋外无法避险', color: '#94702f' }] : []),
   ] : [];
-  if (hudPage !== 'activity' && hudPage !== 'farm' && hudPage !== 'shop' && hudPage !== 'inventory' && hudPage !== 'trees' && hudPage !== 'storm' && hudPage !== 'logistics' && hudPage !== 'orders' && hudPage !== 'water') hudPage = 'activity';
+  if (!['activity', 'farm', 'shop', 'inventory', 'kitchen', 'trees', 'storm', 'logistics', 'orders', 'water'].includes(hudPage)) hudPage = 'activity';
   let cards = definitions.map(({ id, title, detail, color }, index) => {
     const logisticsGrid = narrowHud && hudPage === 'logistics';
     const x = narrowHud && !logisticsGrid ? 30 : columns[index % 2];
@@ -2953,6 +3351,10 @@ function drawHud() {
     cards = inventoryUi.buttons;
   }
   if (hudPage === 'shop') cards = shopCards;
+  if (hudPage === 'kitchen') cards = drawCookingPanel(ctx, state, {
+    selectedId: selectedRecipeId, narrow: narrowHud, offset: hudContentOffset,
+    progress: cookingJob ? cookingJob.elapsed / cookingJob.duration : null, labels: itemLabels, page: kitchenPage,
+  });
   ctx.restore();
   hudButtons = [{ id: 'close-panel', x: 889, y: hudContentOffset + 34, width: 82, height: 67 }, ...cards];
   hudTexture.needsUpdate = true;
@@ -3237,7 +3639,7 @@ function useInventoryItem(itemId) {
     walkTo(root.position.x, root.position.z, { type: 'world', root }, .65);
     return;
   }
-  if (CROPS[itemId] || SEAFOOD[itemId]) {
+  if (DISHES[itemId] || CROPS[itemId] || SEAFOOD[itemId] || itemId === 'food') {
     const result = eatMeal(state, itemId);
     flash(result.ok ? `吃下${result.label} · 饱腹 ${Math.floor(result.satiety)}/100；休息后可恢复体力`
       : result.reason === 'full' ? '已经吃饱了，先休息或继续劳作' : '这份食物已经用完');
@@ -3257,8 +3659,12 @@ function tradeIsInReach() {
 }
 
 function handlePageAction(id) {
-  if (restTransition) return;
+  if (restTransition && !['tab-inventory', 'tab-farm', 'tab-voyage', 'close-panel', 'inventory-prev', 'inventory-next', 'farm-help'].includes(id)
+    && !id.startsWith('inventory-select:') && !id.startsWith('inventory-mode:')) { flash('休息中可查看信息；先起床再进行操作'); return; }
+  if (cookingJob && !id.startsWith('tab-') && id !== 'close-panel') { flash('正在烹饪，请等待这一份料理完成'); return; }
+  if (id === 'tab-voyage' || id === 'activity-voyage') { voyage?.open(); return; }
   if (id.startsWith('tab-')) {
+    voyage?.dismiss();
     if (id === 'tab-storm') stormReportOpen = false;
     const nextPage = id.slice(4);
     hudOpen = hudPage === nextPage ? !hudOpen : true;
@@ -3267,6 +3673,12 @@ function handlePageAction(id) {
     return;
   }
   if (id === 'close-panel') { hudOpen = false; drawHud(); return; }
+  if (id === 'activity-meal') { hudPage = 'kitchen'; hudOpen = true; drawHud(); return; }
+  if (id.startsWith('kitchen-')) { handleKitchenAction(id); return; }
+  if (id.startsWith('inventory-use:') && (DISHES[id.slice(14)] || CROPS[id.slice(14)] || SEAFOOD[id.slice(14)] || id.slice(14) === 'food')) {
+    if (busyAction) { flash('请先完成当前动作'); return; }
+    useInventoryItem(id.slice(14)); drawHud(); return;
+  }
   if (id === 'water-drink') {
     const result = drinkWater(state);
     flash(result.ok ? `饮水完成 · 水分 ${Math.floor(result.hydration)}/100 · 体力恢复上限 ${staminaCeiling(state)}`
@@ -3294,10 +3706,10 @@ function handlePageAction(id) {
     return;
   }
   if (id === 'hut-door') { activateHutDoor(); return; }
-  if (id === 'hut-close') { closeHutDoorOutside(); return; }
+  if (id === 'hut-close') { closeHutDoor(); return; }
   if (id === 'hut-exit') { if (state.shelter.inside && state.shelter.doorOpen) startHutCrossing(false); return; }
   if (storm.phase === 'impact') { flash('台风登陆中，请在小屋内避险'); return; }
-  if (state.shelter.inside && id !== 'activity-rest') { flash('先开门走出小屋，再进行室外操作'); return; }
+  if (state.shelter.inside && !['activity-rest', 'farm-help'].includes(id)) { flash('先开门走出小屋，再进行室外操作'); return; }
   if (id === 'water-refill') {
     const inReach = Math.hypot(avatar.position.x - FRESHWATER_SITE.x, avatar.position.z - FRESHWATER_SITE.z) < 2.2;
     if (inReach) completeArrival({ type: 'water-refill' });
@@ -3399,22 +3811,16 @@ function handlePageAction(id) {
   else if (id === 'sell') {
     openDockTrade('sell');
   } else if (id === 'activity-rest') {
-    if (!state.shelter.inside || state.shelter.doorOpen) { flash('先进入小屋并关门，才能休息'); return; }
-    if (state.satiety < 20) { flash('饱腹不足，先食用背包中的鱼获或农作物'); return; }
-    const plan = planRest(state.gameMinutes, state.stamina, state.storm?.impactAt, restRecoveryCap(state));
-    if (!plan.ok) { flash(restUnavailableMessage(plan.reason)); return; }
-    completeArrival({ type: 'rest', requestedKind: plan.kind });
-  } else if (id === 'activity-meal') {
-    const result = eatMeal(state);
-    flash(result.ok ? `吃下${result.label} · 饱腹 ${Math.floor(result.satiety)}/100；现在休息可恢复体力`
-      : result.reason === 'full' ? '已经吃饱了，先休息或继续劳作'
-        : '背包没有食物；捕鱼或收获农作物后可以进食');
+    requestBedRest();
   } else if (id === 'farm-go') {
     const ready = state.plots.findIndex((plot) => plot.crop && plot.crop.growthMinutes >= CROPS[plot.crop.id]?.minutes);
     const thirsty = state.plots.findIndex((plot) => plot.crop && plot.crop.growthMinutes < CROPS[plot.crop.id]?.minutes
       && state.gameMinutes >= plot.crop.wateredUntil);
     const empty = state.plots.findIndex((plot) => !plot.crop);
-    const target = ready >= 0 ? ready : thirsty >= 0 ? thirsty : empty >= 0 ? empty : 0;
+    const selected = state.plots.findIndex(plot => plot.id === selectedPlotId);
+    const target = selected >= 0 ? selected : ready >= 0 ? ready : thirsty >= 0 ? thirsty : empty >= 0 ? empty : 0;
+    selectedPlotId = state.plots[target]?.id;
+    if (!state.plots[target]?.crop && !usableCropSeed(state, selectedSeed)) { buyAtDock(`${selectedSeed}Seed`, 1); return; }
     const root = cropObjects[target];
     if (root) walkTo(root.position.x, root.position.z, { type: 'world', root }, .65);
     else flash('田地正在准备中，请稍后再试');
@@ -3424,8 +3830,11 @@ function handlePageAction(id) {
     flash(`已选择${cropLabel(selectedSeed)}种子`);
   } else if (id === 'farm-buy-seed') buyAtDock(cropOptions.find((crop) => crop.id === selectedSeed).seed, 1);
   else if (id === 'farm-help') {
-    const garden = plots.garden.pos;
-    walkTo(garden[0], garden[2], { type: 'farm-arrive' });
+    const current = state.plots.findIndex(plot => plot.id === selectedPlotId);
+    const fallback = state.plots.findIndex(plot => plot.crop && plot.crop.growthMinutes >= CROPS[plot.crop.id]?.minutes);
+    const thirsty = state.plots.findIndex(plot => plot.crop && plot.crop.growthMinutes < CROPS[plot.crop.id]?.minutes && state.gameMinutes >= plot.crop.wateredUntil);
+    const active = current >= 0 ? current : fallback >= 0 ? fallback : thirsty >= 0 ? thirsty : 0;
+    selectedPlotId = state.plots[(active + 1) % state.plots.length]?.id;
   }
   else if (id === 'defense-net') buyAtDock('windNet');
   else if (id === 'defense-drain') buyAtDock('drainage');
@@ -3447,7 +3856,11 @@ function handlePageAction(id) {
 }
 
 function handleHudTap(x, y) {
-  if (restTransition) return true;
+  if (restTransition) {
+    const localX = (x - (restSprite.position.x - restSprite.scale.x / 2)) * 640 / restSprite.scale.x;
+    const localY = (y - (screen.height - restSprite.position.y - restSprite.scale.y / 2)) * 280 / restSprite.scale.y;
+    if (restSprite.visible && localX >= 200 && localX <= 440 && localY >= 205 && localY <= 253) { finishBedRest(); return true; }
+  }
   const inside = (rect) => rect && x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height;
   let button;
   const inNavHitArea = hudNavRect && x >= hudNavRect.x && x <= hudNavRect.x + hudNavRect.width
@@ -3466,8 +3879,9 @@ function handleHudTap(x, y) {
   } else return false;
   handlePageAction(button.id);
   if (!button.id.startsWith('tab-') && !button.id.startsWith('inventory-')
-    && !button.id.startsWith('shop-')
-    && !['close-panel', 'tree-next', 'tree-plant', 'activity-cycle', 'farm-seed', 'storm-report-open'].includes(button.id)) {
+    && !button.id.startsWith('shop-') && !button.id.startsWith('kitchen-')
+    && !keepHutControlsOpen(button.id, state.shelter)
+    && !['activity-meal', 'close-panel', 'tree-next', 'tree-plant', 'activity-cycle', 'farm-seed', 'farm-help', 'storm-report-open'].includes(button.id)) {
     hudOpen = false;
   }
   saveState(state);
@@ -3486,8 +3900,10 @@ function updateCamera() {
   camera.bottom = -viewSize / 2;
   camera.near = .1;
   camera.far = 100;
-  camera.position.set(Math.cos(azimuth) * 24, 24, Math.sin(azimuth) * 24);
-  camera.lookAt(0, 0, 0);
+  const focus = voyage?.focus;
+  const x = focus?.x || 0, z = focus?.z || 0;
+  camera.position.set(x + Math.cos(azimuth) * 24, 24, z + Math.sin(azimuth) * 24);
+  camera.lookAt(x, 0, z);
   camera.updateProjectionMatrix();
 }
 
@@ -3504,9 +3920,9 @@ function resize() {
   restShade.scale.set(screen.width, screen.height, 1);
   restSprite.position.set(screen.width / 2, screen.height / 2, 0);
   const restWidth = Math.min(600, screen.width - 28);
-  restSprite.scale.set(restWidth, restWidth * 200 / 640, 1);
+  restSprite.scale.set(restWidth, restWidth * 280 / 640, 1);
   const narrow = screen.width < 600;
-  hudCanvas.height = narrow ? MOBILE_HUD_HEIGHT : HUD_HEIGHT;
+  hudCanvas.height = narrow ? Math.max(MOBILE_HUD_HEIGHT, COOKING_MOBILE_HEIGHT) : HUD_HEIGHT;
   hudWidth = Math.min(screen.width - (narrow ? 16 : 32), narrow ? 440 : 520);
   hudHeight = hudWidth * hudCanvas.height / HUD_WIDTH;
   const navWidth = Math.min(screen.width - (narrow ? 8 : 32), narrow ? 440 : 520);
@@ -3525,9 +3941,10 @@ function resize() {
   const statusHeight = statusWidth * statusCanvas.height / statusCanvas.width;
   const statusX = narrow ? (screen.width - statusWidth) / 2 : 16;
   statusSprite.scale.set(statusWidth, statusHeight, 1);
-  statusSprite.position.set(statusX, screen.height - HUD_TOP, 0);
+  statusSprite.position.set(statusX, screen.height - (narrow ? 60 : HUD_TOP), 0);
   drawHud();
-  if (fishingSession) drawFishingPanel();
+  voyage?.resize();
+  if (fishingSession || fishingResult) drawFishingPanel();
 }
 
 function findAction(object) {
@@ -3536,12 +3953,22 @@ function findAction(object) {
 }
 
 function pick(x, y) {
-  if (restTransition || fishingSession) return;
+  if (restTransition || bedApproach || fishingSession || cookingJob) return;
   raycaster.setFromCamera(new THREE.Vector2(x / screen.width * 2 - 1, 1 - y / screen.height * 2), camera);
   const hit = raycaster.intersectObjects(interactive.filter((item) => item.visible), true)[0];
   const root = hit && findAction(hit.object);
+  if (root?.userData.action.type === 'hut-bed') { requestBedRest(); return; }
+  const point = raycaster.intersectObjects([...walkGroundMeshes, water], false)[0]?.point;
+  if (voyage?.pick(root?.userData.action, point)) return;
+  if (state.shelter.inside && root?.userData.action.type !== 'hut-door' && root?.userData.action.type !== 'kitchen') {
+    if (state.shelter.doorOpen && isOutsideHut(point)) startHutCrossing(false, { x: point.x, z: point.z });
+    else flash(state.shelter.doorOpen ? '点击小屋门或屋外地面走出' : '小屋门已关闭，请先点击门打开');
+    return;
+  }
   if (root) {
+    if (root.userData.action.type === 'voyage-board') { boardVoyageFromHome(); return; }
     if (root.userData.action.type === 'hut-door') { activateHutDoor(); return; }
+    if (root.userData.action.type === 'kitchen') { hudPage = 'kitchen'; hudOpen = true; drawHud(); return; }
     if (state.shelter.inside) { flash('先开门离开小屋'); return; }
     if (root.userData.action.type === 'wave-barrier-site') {
       if (state.defenses.waveBarrier) flash('消浪护栏已安装在海中，正在保护码头');
@@ -3573,19 +4000,31 @@ function pick(x, y) {
     walkTo(point.x, point.z, { type: 'world', root }, root.userData.action.type === 'farmplot' ? .65 : .85);
     return;
   }
-  const point = raycaster.intersectObjects([...walkGroundMeshes, water], false)[0]?.point;
   if (point && !state.shelter.inside) walkTo(point.x, point.z);
+}
+
+function boardVoyageFromHome() {
+  if (!voyage || !avatar || boatTrip || fishingSession || busyAction) { flash('请先完成当前动作'); return; }
+  if (state.shelter.inside) { flash('先开门离开小屋，再到码头登船'); return; }
+  if (['preparing', 'impact'].includes(storm.phase)) { flash('台风将至，请留在家园避险，风浪平息后出航'); return; }
+  if (state.boatDurability <= 0 || state.boatTier === 'wreck') { flash('船只已损坏，先维修再出航'); return; }
+  hudOpen = false;
+  return walkTo(DOCK_APPROACH.x, DOCK_APPROACH.z, { type: 'voyage-board' }, .8);
 }
 
 let gesture = null;
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 onTouches({
   start(points) {
+    if (points.length === 1 && dragFishingForce(points[0].x, points[0].y)) { gesture = { fishingForce: true }; return; }
+    if (points.length === 1 && voyage?.beginHold(points[0].x, points[0].y)) { gesture = { helm: true }; return; }
     if (points.length === 1) gesture = { x: points[0].x, y: points[0].y, lastX: points[0].x, moved: 0, time: Date.now() };
     if (points.length === 2) gesture = { pinch: distance(points[0], points[1]), size: viewSize };
   },
   move(points) {
     if (!gesture) return;
+    if (gesture.fishingForce) { if (points.length) dragFishingForce(points[0].x, points[0].y, true); return; }
+    if (gesture.helm) return;
     if (fishingSession) return;
     if (points.length === 1 && !gesture.pinch) {
       const dx = points[0].x - gesture.lastX;
@@ -3600,8 +4039,10 @@ onTouches({
     }
   },
   end(points) {
+    if (gesture?.fishingForce) { gesture = null; return; }
+    if (voyage?.endHold() || gesture?.helm) { gesture = null; return; }
     if (gesture && !gesture.pinch && gesture.moved < 18 && Date.now() - gesture.time < 450) {
-      if (!handleFishingTap(gesture.x, gesture.y) && !handleHudTap(gesture.x, gesture.y)) pick(gesture.x, gesture.y);
+      if (!voyage?.tap(gesture.x, gesture.y) && !handleFishingTap(gesture.x, gesture.y) && !handleHudTap(gesture.x, gesture.y)) pick(gesture.x, gesture.y);
     }
     gesture = points.length ? gesture : null;
   },
@@ -3620,11 +4061,15 @@ function frame(timeMs) {
     syncStorm();
     updateFishingSession(deltaSeconds, timeMs);
     updateHutDoor(deltaSeconds);
+    updateBedApproach(deltaSeconds);
+    updateCooking(deltaSeconds);
     updateAvatar(deltaSeconds);
+    animateAvatarFace(avatar, time, Boolean(fishingSession) || avatar?.userData.actionUntil > sceneElapsed);
     updateCoastalAvatar(deltaSeconds);
     updateBoatTrip(deltaSeconds);
     updateCatchEffects(deltaSeconds);
     for (const object of interactive) {
+      if (object.userData.indoorBedLabel) object.visible = state.shelter.inside;
       const data = object.userData.action;
       if (data?.type !== 'gather') continue;
       data.active = (state.gatherCooldowns[data.nodeId] || 0) <= state.gameMinutes;
@@ -3646,23 +4091,6 @@ function frame(timeMs) {
     uniform.time.value = time;
     uniform.strength.value = stormWind;
   }
-  stormRain.visible = storm.phase === 'preparing' || storm.phase === 'impact';
-  stormRain.material.opacity = storm.phase === 'impact' ? .27 : .08;
-  for (let i = 0; i < stormRainCount; i++) {
-    const seed = rainSeeds[i];
-    const fall = (time * (storm.phase === 'impact' ? 13 : 8) + seed.y) % 30;
-    const x = seed.x + time * stormWind * .55;
-    const z = seed.z + time * stormWind * .3;
-    const y = 22 - fall;
-    const offset = i * 6;
-    rainPositions[offset] = x;
-    rainPositions[offset + 1] = y;
-    rainPositions[offset + 2] = z;
-    rainPositions[offset + 3] = x + .2 + stormWind * .12;
-    rainPositions[offset + 4] = y - (.55 + stormWind * .28);
-    rainPositions[offset + 5] = z + .08 + stormWind * .16;
-  }
-  rainGeometry.attributes.position.needsUpdate = true;
   water.material.uniforms.uBoatWake.value = boatTrip ? 1 : 0;
   if (boatTrip) {
     const dx = boatTrip.toX - boatTrip.fromX;
@@ -3672,13 +4100,15 @@ function frame(timeMs) {
   }
   const hour = Number.isFinite(Number(state.clockHours)) ? Number(state.clockHours) : 6;
   const tidePhase = -Math.cos(hour * Math.PI / 6);
+  updateWalkDestination();
   water.material.uniforms.uTide.value = tidePhase;
   water.position.y = -.02 + tidePhase * .14;
+  if (foreground) voyage?.update(deltaSeconds, water.position.y);
   if (visualProps.barrierMarker) visualProps.barrierMarker.position.y = water.position.y + .12 + Math.sin(time * 1.5) * .035;
   // The baked hull keel sits .27 m above its root; keep that keel at the
   // changing surface while the gunwale and deck stay visibly above it.
   const boatFloatY = boatFloatOffset(water.position.y, time);
-  if (heroBoat && !boatTrip) {
+  if (heroBoat && !boatTrip && !voyage?.engaged) {
     heroBoat.position.set(BOAT_MOOR.x + Math.sin(time * .42) * (.12 + stormWind * .045),
       BOAT_MESH_ORIGIN.y + boatFloatY, BOAT_MOOR.z + Math.sin(time * .31) * .08);
     heroBoat.rotation.set(Math.sin(time * (1.1 + stormWind)) * (.018 + stormWind * .025), 0,
@@ -3686,36 +4116,46 @@ function frame(timeMs) {
     water.material.uniforms.uBoat.value.set(heroBoat.position.x, heroBoat.position.z);
     refreshBoatVisuals();
   }
-  else if (heroBoat) {
+  else if (heroBoat && !voyage?.engaged) {
     heroBoat.position.y = BOAT_MESH_ORIGIN.y + boatFloatY;
     avatar.position.y = heroBoat.position.y + .45;
     water.material.uniforms.uBoat.value.set(heroBoat.position.x, heroBoat.position.z);
     refreshBoatVisuals();
   }
-  const daylight = THREE.MathUtils.clamp((Math.sin((hour / 24 - .25) * Math.PI * 2) + .12) * 1.18, 0, 1);
-  const twilight = Math.max(0, 1 - Math.abs(daylight - .34) / .38);
-  const sky = new THREE.Color(0x10283d).lerp(new THREE.Color(0x55b4c5), daylight)
-    .lerp(new THREE.Color(0xf1bc83), twilight * .34);
-  if (storm.phase === 'warning' || storm.phase === 'preparing') sky.lerp(new THREE.Color(0x607678), .28);
-  if (storm.phase === 'impact') sky.lerp(new THREE.Color(0x52616a), .67);
-  scene.background.copy(sky); scene.fog.color.copy(sky);
-  sun.intensity = .15 + daylight * 3.8;
-  sun.position.set(Math.cos(hour / 24 * Math.PI * 2) * 28, 5 + daylight * 25, Math.sin(hour / 24 * Math.PI * 2) * 25);
+  if (voyage?.engaged) {
+    water.material.uniforms.uBoat.value.set(heroBoat.position.x, heroBoat.position.z);
+    water.material.uniforms.uBoatWake.value = voyage.wake;
+    water.material.uniforms.uBoatDir.value.set(Math.sin(voyage.heading), Math.cos(voyage.heading));
+    refreshBoatVisuals();
+    updateCamera();
+  }
+  const focus = voyage?.focus;
+  const light = environment.update(hour, storm.phase, time, foreground ? deltaSeconds : 0,
+    { x: focus?.x || 0, z: focus?.z || 0 }, water.position.y);
+  water.material.uniforms.uDaylight.value = light.waterLight;
+  water.material.uniforms.uSunlight.value = light.sunlight * (1 - light.cloud * .78);
+  water.material.uniforms.uMoonlight.value = light.moonlight * (1 - light.cloud * .94);
+  water.material.uniforms.uSunDirection.value.copy(environment.sun.position).sub(environment.sun.target.position).normalize();
+  water.material.uniforms.uMoonDirection.value.copy(environment.moon.position).sub(environment.moon.target.position).normalize();
   if (storm.phase === 'impact' || storm.phase === 'preparing') {
-    camera.position.set(Math.cos(azimuth) * 24 + Math.sin(time * 1.7) * stormWind * .018,
+    camera.position.set((focus?.x || 0) + Math.cos(azimuth) * 24 + Math.sin(time * 1.7) * stormWind * .018,
       24 + Math.sin(time * 1.3) * stormWind * .012,
-      Math.sin(azimuth) * 24 + Math.cos(time * 1.5) * stormWind * .018);
-    camera.lookAt(0, 0, 0);
+      (focus?.z || 0) + Math.sin(azimuth) * 24 + Math.cos(time * 1.5) * stormWind * .018);
+    camera.lookAt(focus?.x || 0, 0, focus?.z || 0);
   }
   for (const item of animated) {
     if (item.school) {
-      const { inst, data, matrix, pos, quat, bankQuat, scale } = item.school;
+      const { inst, data, matrix, pos, quat, bankQuat, scale, crabGait, normal, slopeQuat } = item.school;
       for (let i = 0; i < data.length; i++) {
         const fish = data[i];
         let heading;
         if (fish.target?.reserved) {
           pos.set(fish.target.x, fish.y, fish.target.z);
-          heading = fish.roamer?.heading ?? fish.phase;
+          heading = fish.crab?.heading ?? fish.roamer?.heading ?? fish.phase;
+        } else if (fish.crab) {
+          stepSandCrab(fish.crab, foreground ? deltaSeconds : 0);
+          pos.set(fish.crab.x, fish.y, fish.crab.z);
+          heading = fish.crab.heading;
         } else if (fish.roamer) {
           stepRoamer(fish.roamer, deltaSeconds);
           pos.set(fish.roamer.x, fish.y + Math.sin(time * .85 + fish.bob) * fish.bobble, fish.roamer.z);
@@ -3726,15 +4166,32 @@ function frame(timeMs) {
                   Math.sin(angle) * fish.radius);
           heading = Math.atan2(Math.cos(angle), -Math.sin(angle)) + (fish.speed < 0 ? Math.PI : 0);
         }
-        if (fish.target?.speciesId === 'crab') pos.y = groundHeightAt(pos.x, pos.z) - fish.groundMinY * fish.size + .035;
+        if (fish.crab) {
+          pos.y = groundHeightAt(pos.x, pos.z) - fish.groundMinY * fish.size + .012;
+          crabGait.setXY(i, fish.crab.gait, fish.target?.reserved ? 0 : fish.crab.activity);
+        }
         if (fish.target) {
           fish.target.x = pos.x; fish.target.y = pos.y; fish.target.z = pos.z;
           const available = targetAvailable(fish.target);
           fish.target.proxy.visible = available;
           fish.target.proxy.position.set(pos.x, pos.y, pos.z);
-          if (!available) { scale.setScalar(0.0001); matrix.compose(pos, quat, scale); inst.setMatrixAt(i, matrix); continue; }
+          if (!available) {
+            if (fish.crab) sandTracks?.follow(fish.target.id, pos, { kind: 'crab', enabled: false });
+            scale.setScalar(0.0001); matrix.compose(pos, quat, scale); inst.setMatrixAt(i, matrix); continue;
+          }
         }
         quat.setFromAxisAngle(Y_AXIS, -heading);
+        if (fish.crab) {
+          sandTracks?.follow(fish.target.id, pos, { kind: 'crab', angle: -heading,
+            enabled: foreground && !fish.target.reserved });
+          // Match the sloping beach plane so uphill feet don't disappear in
+          // sand while the downhill legs float in the air.
+          const dx = (groundHeightAt(pos.x + .16, pos.z) - groundHeightAt(pos.x - .16, pos.z)) / .32;
+          const dz = (groundHeightAt(pos.x, pos.z + .16) - groundHeightAt(pos.x, pos.z - .16)) / .32;
+          normal.set(-dx, 1, -dz).normalize();
+          slopeQuat.setFromUnitVectors(Y_AXIS, normal).multiply(quat);
+          quat.copy(slopeQuat);
+        }
         if (fish.bank) {
           bankQuat.setFromAxisAngle(X_AXIS, fish.bank * Math.sin(time * 1.7 + fish.bob));
           quat.multiply(bankQuat);
@@ -3744,6 +4201,7 @@ function frame(timeMs) {
         inst.setMatrixAt(i, matrix);
       }
       inst.instanceMatrix.needsUpdate = true;
+      if (crabGait) crabGait.needsUpdate = true;
       continue;
     }
     if (item.bob) item.object.position.y = item.baseY + Math.sin(time * item.speed) * item.amount;
@@ -3755,6 +4213,13 @@ function frame(timeMs) {
     if (!item.bob && !item.spin && !item.grow) item.object.rotation.z = Math.sin(time * item.speed) * item.amount;
   }
   if (activeMarineTarget && marineTargetMarker) marineTargetMarker.position.set(activeMarineTarget.x, water.position.y + .12, activeMarineTarget.z);
+  if (avatar && sandTracks) {
+    sandTracks.follow('avatar', avatar.position, { enabled: foreground && avatar.visible
+      && !hutCrossing && !state.shelter.inside && !boatTrip
+      && (voyage?.engaged ? voyage.ashore : marineMode === 'land') });
+    sandTracks.update(foreground ? deltaSeconds : 0, time, tidePhase, water.material.uniforms.uStorm.value);
+    sandTrackVisual.sync();
+  }
   positionFeedback();
   renderer.clear();
   renderer.render(scene, camera);
@@ -3772,11 +4237,35 @@ async function start() {
   createTradeSign();
   createFreshwaterCollector();
   createHutDoorSign();
+  createCookingStation();
   createAvatar();
+  voyage = createVoyageScene({ scene, hudScene, state, interactive, surfUniforms: water.material.uniforms, palmSource: voyagePalmSource, artAssets: voyageArtAssets, getAvatar: () => avatar, getBoat: () => heroBoat,
+    flash, save: saveState, boardFromHome: boardVoyageFromHome, getScreen: () => screen,
+    closeHud: () => { hudOpen = false; drawHud(); }, isBlocked: () => busyAction || !foreground, isHudOpen: () => hudOpen,
+    useSupply: (kind) => {
+      const result = kind === 'drink' ? drinkWater(state) : eatMeal(state);
+      flash(result.ok ? kind === 'drink' ? `饮水完成 · 水分 ${Math.floor(state.freshwater.hydration)}/100`
+        : `吃下${result.label} · 饱腹 ${Math.floor(state.satiety)}/100；返家休息恢复体力`
+        : result.reason === 'full' ? '当前水分或饱腹充足，暂时无需补充' : kind === 'drink' ? '水壶已空，请到泉眼岛装水' : '食物不足，可去椰林岛采集椰果');
+      saveState(state);
+    },
+    onHome: () => {
+      avatarTarget = null; avatarRoute = []; arrivalAction = null; marineMode = 'land';
+      avatar.rotation.set(0, 0, 0); avatar.visible = true;
+      avatar.position.set(DOCK_APPROACH.x, groundHeightAt(DOCK_APPROACH.x, DOCK_APPROACH.z) + .02, DOCK_APPROACH.z);
+      updateCamera();
+    },
+  });
+  walkGroundMeshes.push(...voyage.remoteGround);
+  sandTracks = createSandTracks({ sampleSand: sampleTrackSand });
+  sandTrackVisual = createSandTrackVisual(sandTracks);
+  scene.add(sandTrackVisual.mesh);
+  voyage.resume();
   createFarmBeds();
   onForegroundChange((visible) => {
     foreground = visible;
     previousFrameMs = 0;
+    voyage?.releaseControls();
     if (!visible) saveState(state);
   });
   ensureStormSchedule();
@@ -3797,21 +4286,31 @@ start().catch((error) => {
 
 if (typeof window !== 'undefined') {
   window.addEventListener('keydown', (event) => {
-    if (event.repeat || event.altKey || event.ctrlKey || event.metaKey) return;
+    if (event.target?.closest?.('input, textarea, dialog, [contenteditable="true"]')) return;
+    if (voyage?.key(event, true)) return;
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
     if (fishingSession) {
+      if (event.repeat && !['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
       const force = ({ 1: 'light', 2: 'steady', 3: 'strong' })[event.key];
       if (event.key === 'Escape') handleFishingAction('cancel');
       else if (event.key === ' ' || event.key === 'Enter') handleFishingAction('hook');
       else if (force) handleFishingAction(force);
+      else if (event.key === 'ArrowLeft') handleFishingAction('force-down');
+      else if (event.key === 'ArrowRight') handleFishingAction('force-up');
+      else if (event.key.toLowerCase() === 'f') handleFishingAction('assist');
       event.preventDefault();
       return;
     }
-    const pages = ['activity', 'farm', 'inventory', 'trees', 'storm', 'logistics', 'orders'];
+    if (event.repeat) return;
+    const pages = ['activity', 'voyage', 'farm', 'inventory', 'kitchen', 'trees', 'storm', 'logistics', 'orders'];
     const index = Number(event.key) - 1;
+    if (event.key === 'Escape' && voyage?.mapOpen) { voyage.dismiss(); return; }
     if (event.key === 'Escape' && hudOpen) { hudOpen = false; drawHud(); return; }
-    if (index >= 0 && index < (state.shopLevel >= 2 ? 7 : 6)) {
+    if (index >= 0 && index < (state.shopLevel >= 2 ? 9 : 8)) {
       handlePageAction(`tab-${pages[index]}`);
       event.preventDefault();
     }
   });
+  window.addEventListener('keyup', (event) => voyage?.key(event, false));
+  window.addEventListener('blur', () => voyage?.releaseControls());
 }

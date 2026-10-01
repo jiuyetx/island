@@ -1,0 +1,17 @@
+{
+  "schema": "game-room.prop-manifest.v1",
+  "roomId": "island-plant-refresh",
+  "generation": {
+    "provider": "local-blender-procedural",
+    "apiModel": null,
+    "pricingSource": null,
+    "pricingVerifiedAt": "",
+    "creditsPerTexturedTask": 0,
+    "hardCreditCeiling": 0,
+    "maxChargedAttemptsPerAsset": 2
+  },
+  "assets": [
+    {"id": "Palm_Source", "function": "Reusable interactive harvestable palm", "description": "Layered full crown, rounded feather fronds, curved collar-ringed trunk, coconuts", "class": "reusable", "dimensionsMeters": [4.8, 4.3, 4.8], "attachmentFace": "floor", "semanticFront": "positive-z", "intendedInstances": 3, "targetPolycount": 6500, "rejectionCriteria": ["Sparse comb-shaped crown", "Floating roots", "Canopy blocks interaction signs", "Missing leaf undersides"], "image": {"prompt": "Actual authored geometry render, full form, soft natural greens and warm bark", "generator": "Blender Cycles CPU", "source": "renders/plant-family.png", "approved": true, "approvedBy": "user"}},
+    {"id": "Bush_Source", "function": "Low restrained island habitat dressing", "description": "Readable cupped leaves and coral/peach five-petal hibiscus flowers", "class": "reusable", "dimensionsMeters": [1.4, 0.9, 1.4], "attachmentFace": "floor", "semanticFront": "positive-z", "intendedInstances": 3, "targetPolycount": 5500, "rejectionCriteria": ["Green boulder silhouette", "Flat dot flowers", "Floating stems", "Excess clutter"], "image": {"prompt": "Actual authored shrub geometry render with leaves, petals and stamens", "generator": "Blender Cycles CPU", "source": "renders/plant-family.png", "approved": true, "approvedBy": "user"}}
+  ]
+}

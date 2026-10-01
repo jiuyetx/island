@@ -4,6 +4,7 @@ import { Box3, CircleGeometry, DoubleSide, Mesh, MeshBasicMaterial, Raycaster, V
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { groundPlacements } from '../src/terrain.js';
 import { BOAT_MESH_ORIGIN, BOAT_MOOR, boatFloatOffset } from '../src/boat.js';
+import { coastlineRadius } from '../src/coastline.js';
 
 async function load(file) {
   const bytes = await readFile(new URL(`../assets/generated/${file}`, import.meta.url));
@@ -36,13 +37,53 @@ function triangleCount(root) {
   return total;
 }
 const palmTriangles = triangleCount(vegetation.scene.getObjectByName('Palm_Source'));
-assert.ok(palmTriangles >= 1200 && palmTriangles <= 2500, `palm triangles: ${palmTriangles}`);
+assert.ok(palmTriangles >= 5000 && palmTriangles <= 6500, `approved palm triangles: ${palmTriangles}`);
+const bushTriangles = triangleCount(vegetation.scene.getObjectByName('Bush_Source'));
+assert.ok(bushTriangles >= 4000 && bushTriangles <= 5500, `approved shrub triangles: ${bushTriangles}`);
+for (const name of ['Palm_Source', 'Bush_Source']) {
+  const source = vegetation.scene.getObjectByName(name);
+  assert.equal(source.userData.authoredPlant, true, `${name} authored palette marker`);
+  source.updateMatrixWorld(true);
+  const bounds = new Box3().setFromObject(source);
+  assert.ok(Math.abs(bounds.min.y) < .001, `${name} root contact origin`);
+  let draws = 0;
+  const colors = new Set();
+  source.traverse(object => {
+    if (!object.isMesh) return;
+    draws++;
+    assert.equal(object.userData.authoredPlant, true, `${name} mesh colour marker`);
+    const rgba = object.geometry.attributes.color;
+    for (let i = 0; i < rgba.count; i++) colors.add([rgba.getX(i), rgba.getY(i), rgba.getZ(i)].map(v => v.toFixed(2)).join(','));
+  });
+  assert.equal(draws, 1, `${name} single shared draw`);
+  assert.ok(colors.size >= 5, `${name} separate bark/leaves/flowers palette`);
+}
 for (const name of ['Fish_A_Source', 'Fish_B_Source', 'Sea_SilverJack_Source']) {
   const triangles = triangleCount(vegetation.scene.getObjectByName(name));
   assert.ok(triangles >= 150 && triangles <= 350, `${name} triangles: ${triangles}`);
 }
 const avatarTriangles = triangleCount(avatar.scene);
-assert.ok(avatarTriangles >= 1000 && avatarTriangles <= 5200, `avatar triangles: ${avatarTriangles}`);
+assert.ok(avatarTriangles >= 1000 && avatarTriangles <= 8000, `avatar triangles: ${avatarTriangles}`);
+avatar.scene.updateMatrixWorld(true);
+const headBounds = new Box3().setFromObject(avatar.scene.getObjectByName('Avatar_Head'));
+assert.ok(headBounds.getSize(new Vector3()).x >= .68, 'large, readable rounded head');
+const avatarBounds = new Box3().setFromObject(avatar.scene);
+assert.ok(avatarBounds.min.y >= -.001 && avatarBounds.min.y < .025, 'feet contact, not floating or embedded');
+assert.ok(avatarBounds.max.y > 1.8 && avatarBounds.max.y < 2.1, 'keep world scale compatible with docks and doorways');
+assert.equal(avatar.scene.getObjectByName('Avatar_ToolGrip').parent.name, 'Avatar_Arm_R', 'held tools inherit arm motion');
+const rightArm = avatar.scene.getObjectByName('Avatar_Arm_R');
+const toolGrip = avatar.scene.getObjectByName('Avatar_ToolGrip');
+const hand = avatar.scene.getObjectByName('Avatar_Hand_R');
+const gripBefore = toolGrip.getWorldPosition(new Vector3());
+assert.ok(gripBefore.distanceTo(hand.getWorldPosition(new Vector3())) < .08, 'grip stays in the mitten');
+rightArm.rotation.x = -.9;
+avatar.scene.updateMatrixWorld(true);
+assert.ok(gripBefore.distanceTo(toolGrip.getWorldPosition(new Vector3())) > .2, 'work animation moves held tools with hand');
+assert.ok(toolGrip.getWorldPosition(new Vector3()).distanceTo(hand.getWorldPosition(new Vector3())) < .08, 'grip stays attached during cast');
+rightArm.rotation.x = 0;
+for (const name of ['Avatar_HeadPivot', 'Avatar_Eye_L', 'Avatar_Eye_R', 'Avatar_Smile', 'Avatar_HatShell', 'Avatar_Pocket']) {
+  assert.ok(avatar.scene.getObjectByName(name), `readable character detail: ${name}`);
+}
 
 for (const scene of [island.scene, vegetation.scene, buildings.scene]) scene.traverse((object) => {
   if (!object.isMesh) return;
@@ -59,8 +100,7 @@ let maxShoreError = 0;
 for (let i = 0; i < positions.count; i++) {
   const point = new Vector3().fromBufferAttribute(positions, i).applyMatrix4(shoreMesh.matrixWorld);
   const angle = Math.atan2(-point.z, point.x);
-  const expected = coastline.shoreRadius * (1 + coastline.radialHarmonics.reduce((sum, term) =>
-    sum + term.amplitude * Math.sin(angle * term.frequency + term.phase), 0));
+  const expected = coastlineRadius(angle);
   const error = Math.abs(Math.hypot(point.x, point.z) - expected);
   if (error < .01) shorelineSamples++;
   maxShoreError = Math.max(maxShoreError, error < .01 ? error : 0);
@@ -79,8 +119,7 @@ for (let i = 0; i < boatPositions.count; i++) {
   const x = boatWorld.x + BOAT_MOOR.x - BOAT_MESH_ORIGIN.x;
   const z = boatWorld.z + BOAT_MOOR.z - BOAT_MESH_ORIGIN.z;
   const angle = Math.atan2(-z, x);
-  const shore = coastline.shoreRadius * (1 + coastline.radialHarmonics.reduce((sum, term) =>
-    sum + term.amplitude * Math.sin(angle * term.frequency + term.phase), 0));
+  const shore = coastlineRadius(angle);
   mooringShoreClearance = Math.min(mooringShoreClearance, Math.hypot(x, z) - shore);
 }
 assert.ok(mooringShoreClearance > 0, `boat clips dry beach: ${mooringShoreClearance.toFixed(2)} m`);

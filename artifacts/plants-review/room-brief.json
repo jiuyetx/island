@@ -1,0 +1,17 @@
+{
+  "schema": "game-room.room-brief.v1",
+  "roomId": "island-plant-refresh",
+  "family": "custom",
+  "purpose": "Existing palm and hibiscus form proposal; preserve island layout and gameplay",
+  "runtimeSurface": "Three.js web and WeChat, pending asset replacement approval",
+  "boundsMeters": [38, 8, 38],
+  "hero": {"id": "Avatar_Root", "role": "Playable islander, not vegetation", "reservedBoundsMeters": [1.2, 1.6, 1.2]},
+  "symmetry": {"mode": "none", "order": 1, "appliesTo": [], "exceptions": []},
+  "circulation": {"description": "Retain existing house/dock/farm clearances; no extra plants added", "minimumClearanceMeters": 1.4},
+  "productionCamera": {"viewport": [1308, 1314], "location": [18.04, 24, -15.83], "target": [0, 1.5, 0], "verticalFovDegrees": 45, "projection": "orthographic"},
+  "performanceBudget": {"maxSceneTriangles": 160000, "maxVLowBytes": 5000000, "maxHighTextureBytes": 1048576},
+  "creditBudget": {"maximumCredits": 0, "approvalRequired": true},
+  "environment": {"type": "none", "identity": "", "source": "", "assignmentKey": ""},
+  "artifacts": {"floorPlan": "", "reflectedCeilingPlan": "", "planMetadata": "plan-metadata.json", "wallElevations": [], "visualTarget": "renders/plant-family.png", "openingContactSheet": ""},
+  "scopeContract": "plant-contract.md"
+}
