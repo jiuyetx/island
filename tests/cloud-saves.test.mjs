@@ -8,6 +8,7 @@ import { freshState, normalizeState } from '../src/economy.js';
 import { CloudSaveController } from '../src/cloudSave.js';
 import { createSaveStorage } from '../src/saveStorage.js';
 import { validateSave } from '../src/saveFormat.js';
+import { onRequestGet as saveStatus } from '../functions/api/save-status.js';
 
 const { publicKey, privateKey } = await generateKeyPair('RS256');
 const jwk = await exportJWK(publicKey);
@@ -34,6 +35,9 @@ try {
     return { id };
   });
   const env = { SAVES_DB: db, GOOGLE_CLIENT_ID: clientId };
+  assert.deepEqual(await (await saveStatus({ env })).json(), { available: true });
+  assert.equal((await saveStatus({ env: {} })).status, 503);
+  assert.equal((await saveStatus({ env: { GOOGLE_CLIENT_ID: clientId, SAVES_DB: { prepare() { throw new Error('missing table'); } } } })).status, 503);
   const raw = (user, options = {}, path = '/api/saves') => handlers.saves({
     request: new Request(`https://game.example${path}`, { ...options, headers: { Authorization: `Bearer ${user}`, 'Content-Type': 'application/json', ...options.headers } }), env,
   });

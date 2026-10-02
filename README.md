@@ -106,7 +106,7 @@ Cloudflare Pages 中应在生产环境变量里设置同名变量，并在 Googl
 2. 在数据库控制台执行 `migrations/0001_cloud_saves.sql`（或通过 Wrangler 对该数据库执行迁移）。
 3. 在现有 Pages 项目的生产环境新增 D1 binding，变量名为 `SAVES_DB`，选择该数据库；配置运行时 `GOOGLE_CLIENT_ID`。
 4. 重新部署。仓库根目录的 `functions/api/` 会自动构建 `/api/account` 和 `/api/saves`。
-5. 使用两个独立设备/浏览器登录同一账号，验证上传、冲突选择、下载和恢复；未绑定数据库时接口返回 503 并保留本机进度。预览环境应使用独立测试数据库，不能绑定生产数据库。
+5. `/api/save-status` 返回 `{"available":true}` 表示运行时变量、D1 连接和存档表已就绪（不会返回账号或存档内容）。使用两个独立设备/浏览器登录同一账号，验证上传、冲突选择、下载和恢复；未绑定数据库时接口返回 503 并保留本机进度。预览环境应使用独立测试数据库，不能绑定生产数据库。
 
 本地完整服务：在未跟踪的 `.dev.vars` 设置测试用 `GOOGLE_CLIENT_ID`，构建时注入同一个 ID，执行 `npm run db:local` 后执行 `npm run dev:cloud`。Google 测试客户端需要授权 `http://localhost:8788`。普通静态预览只用于场景检查，无法处理存档 API。`wrangler.toml` 未设置 `pages_build_output_dir`，仅用于本地，不接管现有生产配置。
 
