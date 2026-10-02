@@ -94,7 +94,23 @@ Cloudflare Pages 连接 GitHub 仓库后，推送到 `main` 会自动触发生�
 GOOGLE_CLIENT_ID="your-client-id.apps.googleusercontent.com" npm run build
 ```
 
-Cloudflare Pages 中应在生产环境变量里设置同名变量，并在 Google Cloud OAuth 客户端中把 `https://island.dailysnake.com` 配置为授权 JavaScript 来源。登录仅用于身份识别，游戏存档仍保存在浏览器本机。
+Cloudflare Pages 中应在生产环境变量里设置同名变量，并在 Google Cloud OAuth 客户端中把 `https://island.dailysnake.com` 配置为授权 JavaScript 来源。服务器也需要同名运行时变量，以校验 Google ID token 的签名、来源、有效期和用户 ID。登录凭证只暂存在标签页，不保存在存档数据库。
+
+### 云存档
+
+账号菜单提供手动上传、下载、进度冲突选择和历史恢复。D1 保留最近 30 个版本；恢复会写入新版本。下载或恢复前本机保留 5 份备份，可在历史恢复中选择。网络失败不会清除本地存档；账号和游客的本地进度分别保存。切换账号后须选择此账号本地或云端进度，不能把其他账号存档直接上传。载入不会推进游戏时间，也不合并资源。
+
+生产配置步骤（已有 Pages 项目仍由 dashboard 管理，不要使用本地配置覆盖生产）：
+
+1. 在现有 Cloudflare 账号中创建 D1 数据库 `island-saves`。
+2. 在数据库控制台执行 `migrations/0001_cloud_saves.sql`（或通过 Wrangler 对该数据库执行迁移）。
+3. 在现有 Pages 项目的生产环境新增 D1 binding，变量名为 `SAVES_DB`，选择该数据库；配置运行时 `GOOGLE_CLIENT_ID`。
+4. 重新部署。仓库根目录的 `functions/api/` 会自动构建 `/api/account` 和 `/api/saves`。
+5. 使用两个独立设备/浏览器登录同一账号，验证上传、冲突选择、下载和恢复；未绑定数据库时接口返回 503 并保留本机进度。预览环境应使用独立测试数据库，不能绑定生产数据库。
+
+本地完整服务：在未跟踪的 `.dev.vars` 设置测试用 `GOOGLE_CLIENT_ID`，构建时注入同一个 ID，执行 `npm run db:local` 后执行 `npm run dev:cloud`。Google 测试客户端需要授权 `http://localhost:8788`。普通静态预览只用于场景检查，无法处理存档 API。`wrangler.toml` 未设置 `pages_build_output_dir`，仅用于本地，不接管现有生产配置。
+
+`npm test` 包括签名校验和真实本地 D1 测试，覆盖两台设备并发写入、恢复时冲突、历史保留、重试幂等、账号隔离、断网和时间保持。测试身份只由测试代码注入，生产接口没有测试登录或身份绕过开关。
 
 ## 微信开发者工具
 

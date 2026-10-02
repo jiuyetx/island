@@ -1,0 +1,10 @@
+# Local development only. Deliberately omit pages_build_output_dir so production
+# bindings remain in the existing Pages dashboard.
+name = "island-saves-local"
+compatibility_date = "2026-10-01"
+
+[[d1_databases]]
+binding = "SAVES_DB"
+database_name = "island-saves-local"
+database_id = "00000000-0000-0000-0000-000000000001"
+migrations_dir = "migrations"

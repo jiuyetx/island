@@ -1,3 +1,5 @@
+import { createSaveStorage } from './saveStorage.js';
+
 const isWeChat = typeof wx !== 'undefined' && typeof wx.createCanvas === 'function';
 
 export const canvas = isWeChat ? wx.createCanvas() : document.querySelector('#game');
@@ -47,18 +49,29 @@ export function loadImage(src) {
   });
 }
 
+let browserSaveStorage;
+export function getBrowserSaveStorage() {
+  if (isWeChat) return null;
+  return browserSaveStorage ||= createSaveStorage(localStorage);
+}
+
 export function loadState() {
   try {
-    const value = isWeChat ? wx.getStorageSync('island-state') : localStorage.getItem('island-state');
+    if (!isWeChat) return getBrowserSaveStorage().load();
+    const value = wx.getStorageSync('island-state');
     return typeof value === 'string' ? JSON.parse(value) : value;
   } catch { return null; }
 }
 
+let localSavesSuspended = false;
+export function suspendLocalSaves() { localSavesSuspended = true; }
+
 export function saveState(value) {
+  if (localSavesSuspended) return;
   try {
     const text = JSON.stringify(value);
     if (isWeChat) wx.setStorageSync('island-state', text);
-    else localStorage.setItem('island-state', text);
+    else getBrowserSaveStorage().save(value);
   } catch { /* Storage failure must not stop play. */ }
 }
 

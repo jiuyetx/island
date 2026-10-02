@@ -4,3 +4,5 @@ dist/
 npm-debug.log*
 __pycache__/
 *.pyc
+.wrangler/
+.dev.vars*

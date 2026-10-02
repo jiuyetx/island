@@ -35,7 +35,7 @@ import { cookMeal } from './economy.js';
 import { COOKING_MOBILE_HEIGHT, drawCookingPanel } from './cookingUi.js';
 import { HUT_DOOR_INSIDE, HUT_DOOR_OUTSIDE, createHutCrossing, hutControls, hutDoorIntent, isOutsideHut, keepHutControlsOpen, stepHutCrossing } from './hut.js';
 
-import { canvas, loadImage, loadState, nextFrame, offscreen, onForegroundChange, onResize, onTouches, saveState, viewport } from './platform.js';
+import { canvas, getBrowserSaveStorage, loadImage, loadState, nextFrame, offscreen, onForegroundChange, onResize, onTouches, saveState, suspendLocalSaves, viewport } from './platform.js';
 import islandGlb from '../assets/generated/tropical-island.glb';
 import vegetationGlb from '../assets/generated/tropical-vegetation.glb';
 import buildingsGlb from '../assets/generated/tropical-buildings.glb';
@@ -71,7 +71,13 @@ const hutRoofs = [];
 let heroBoat = null;
 const forceCutaway = typeof location !== 'undefined' && /cutaway/.test(location.search);
 const state = normalizeState(loadState());
-initGoogleAuth();
+let accountDialogOpen = false;
+initGoogleAuth({
+  readState: () => state, normalize: normalizeState,
+  saveStorage: (() => { try { return getBrowserSaveStorage(); } catch { return null; } })(),
+  onPause: (paused) => { accountDialogOpen = paused; if (paused) saveState(state); },
+  reload: () => { suspendLocalSaves(); location.reload(); },
+});
 let screen = viewport();
 let viewSize = 38;
 let azimuth = -0.72;
@@ -4051,11 +4057,12 @@ onTouches({
 onResize(resize);
 
 function frame(timeMs) {
+  const active = foreground && !accountDialogOpen;
   const time = timeMs * .001;
   const stormWind = storm.phase === 'impact' ? 1.8 : storm.phase === 'preparing' ? .95 : storm.phase === 'warning' ? .42 : .08;
   const deltaSeconds = previousFrameMs ? Math.min(.1, Math.max(0, (timeMs - previousFrameMs) / 1000)) : 0;
   previousFrameMs = timeMs;
-  if (foreground && deltaSeconds > 0) {
+  if (active && deltaSeconds > 0) {
     if (restTransition) updateRestTransition(deltaSeconds);
     else if (!fishingSession && !boatTrip) advanceGameTime(state, deltaSeconds * PASSIVE_TIME_SCALE);
     syncStorm();
@@ -4103,7 +4110,7 @@ function frame(timeMs) {
   updateWalkDestination();
   water.material.uniforms.uTide.value = tidePhase;
   water.position.y = -.02 + tidePhase * .14;
-  if (foreground) voyage?.update(deltaSeconds, water.position.y);
+  if (active) voyage?.update(deltaSeconds, water.position.y);
   if (visualProps.barrierMarker) visualProps.barrierMarker.position.y = water.position.y + .12 + Math.sin(time * 1.5) * .035;
   // The baked hull keel sits .27 m above its root; keep that keel at the
   // changing surface while the gunwale and deck stay visibly above it.
@@ -4130,7 +4137,7 @@ function frame(timeMs) {
     updateCamera();
   }
   const focus = voyage?.focus;
-  const light = environment.update(hour, storm.phase, time, foreground ? deltaSeconds : 0,
+  const light = environment.update(hour, storm.phase, time, active ? deltaSeconds : 0,
     { x: focus?.x || 0, z: focus?.z || 0 }, water.position.y);
   water.material.uniforms.uDaylight.value = light.waterLight;
   water.material.uniforms.uSunlight.value = light.sunlight * (1 - light.cloud * .78);
@@ -4153,7 +4160,7 @@ function frame(timeMs) {
           pos.set(fish.target.x, fish.y, fish.target.z);
           heading = fish.crab?.heading ?? fish.roamer?.heading ?? fish.phase;
         } else if (fish.crab) {
-          stepSandCrab(fish.crab, foreground ? deltaSeconds : 0);
+          stepSandCrab(fish.crab, active ? deltaSeconds : 0);
           pos.set(fish.crab.x, fish.y, fish.crab.z);
           heading = fish.crab.heading;
         } else if (fish.roamer) {
@@ -4183,7 +4190,7 @@ function frame(timeMs) {
         quat.setFromAxisAngle(Y_AXIS, -heading);
         if (fish.crab) {
           sandTracks?.follow(fish.target.id, pos, { kind: 'crab', angle: -heading,
-            enabled: foreground && !fish.target.reserved });
+            enabled: active && !fish.target.reserved });
           // Match the sloping beach plane so uphill feet don't disappear in
           // sand while the downhill legs float in the air.
           const dx = (groundHeightAt(pos.x + .16, pos.z) - groundHeightAt(pos.x - .16, pos.z)) / .32;
@@ -4214,10 +4221,10 @@ function frame(timeMs) {
   }
   if (activeMarineTarget && marineTargetMarker) marineTargetMarker.position.set(activeMarineTarget.x, water.position.y + .12, activeMarineTarget.z);
   if (avatar && sandTracks) {
-    sandTracks.follow('avatar', avatar.position, { enabled: foreground && avatar.visible
+    sandTracks.follow('avatar', avatar.position, { enabled: active && avatar.visible
       && !hutCrossing && !state.shelter.inside && !boatTrip
       && (voyage?.engaged ? voyage.ashore : marineMode === 'land') });
-    sandTracks.update(foreground ? deltaSeconds : 0, time, tidePhase, water.material.uniforms.uStorm.value);
+    sandTracks.update(active ? deltaSeconds : 0, time, tidePhase, water.material.uniforms.uStorm.value);
     sandTrackVisual.sync();
   }
   positionFeedback();
