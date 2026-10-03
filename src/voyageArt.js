@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { landingPoint, islandResourcePoint } from './voyage.js';
 import { createReefFish, stepReefFish } from './reefFish.js';
 import { createBeachMaterial } from './beachMaterial.js';
+import { islandShoreRadius } from './coastline.js';
+import { createFishMaterial } from './fishVisual.js';
+export { islandShoreRadius } from './coastline.js';
 
 const TAU = Math.PI * 2;
 const smooth = (a, b, x) => THREE.MathUtils.smoothstep(x, a, b);
@@ -9,24 +12,37 @@ const noise = (x, z, seed = 0) => (Math.sin(x * 1.73 + seed) * Math.cos(z * 1.21
 
 // The visual shore stays inside the conservative circular navigation boundary.
 // The same height function grounds both the mesh and the walking character.
-export function islandShoreRadius(island, angle) {
-  return island.radius * (.955 + .025 * Math.sin(angle * 3 + island.x) + .015 * Math.sin(angle * 5 + island.z));
-}
-
 export function islandTerrainHeight(island, x, z) {
   const dx = x - island.x, dz = z - island.z;
-  const ratio = Math.hypot(dx, dz) / islandShoreRadius(island, Math.atan2(dx, dz));
-  if (ratio <= .62) {
-    const hill = noise(dx * .44, dz * .44, island.x) * .22;
-    return .9 + hill * Math.sin(ratio / .62 * Math.PI);
-  }
-  if (ratio <= 1) return .9 * (1 - smooth(.62, 1, ratio));
-  return -1.65 * smooth(1, 1.29, ratio);
+  const distance = Math.hypot(dx, dz), angle = Math.atan2(dx, dz);
+  const ratio = distance / islandShoreRadius(island, angle);
+  if (ratio > 1) return -1.65 * smooth(1, 1.29, ratio);
+  // The resource clearing stays level. Previously the spring was partly buried
+  // by terrain bumps, and chest foundations hovered above nearby depressions.
+  const seed = island.x * .071 + island.z * .043;
+  const grassEdge = .60 + .045 * Math.sin(angle * 2 + seed) + .025 * Math.sin(angle * 5 - seed);
+  const flat = smooth(2.15, 3.15, distance);
+  const land = .9 * (1 - smooth(grassEdge, 1, ratio));
+  const landward = (dx * island.x + dz * island.z) / Math.hypot(island.x, island.z);
+  const side = (dx * -island.z + dz * island.x) / Math.hypot(island.x, island.z);
+  const ridge = Math.exp(-((landward - island.radius * .40) ** 2 + side * side * .55) / (island.radius * .22) ** 2);
+  const rise = island.id === 'beacon' ? .82 : island.id === 'spring' ? .52 : island.id === 'ruins' ? .33 : .24;
+  let relief = (rise * ridge + noise(dx * .42, dz * .42, seed) * .13) * flat * (1 - smooth(.60, .94, ratio));
+  const temple = island.id === 'ruins' ? (1 - smooth(3.3, 4.0, Math.abs(dx))) * (1 - smooth(2.3, 2.9, Math.abs(dz + 2.55))) : 0;
+  const dunes = Math.sin(angle * 7 + distance * 2.1) * .09 * smooth(.58, .72, ratio) * (1 - smooth(.84, 1, ratio));
+  return THREE.MathUtils.lerp(land + relief + dunes, .9, temple);
+}
+
+export function islandWalkPoint(island, point) {
+  const dx = point.x - island.x, dz = point.z - island.z, distance = Math.hypot(dx, dz);
+  const limit = Math.min(island.radius - 1.5, islandShoreRadius(island, Math.atan2(dx, dz)) - island.radius * .16);
+  const scale = Math.min(1, limit / (distance || 1));
+  return { x: island.x + dx * scale, z: island.z + dz * scale };
 }
 
 export function createIslandTerrain(island, surfUniforms) {
   const positions = [0, .9, 0], colors = [], indices = [], segments = 80, rings = 24;
-  const grass = new THREE.Color(island.id === 'ruins' ? 0x7e994c : 0x82ad59);
+  const grass = new THREE.Color(island.id === 'ruins' ? 0x929f58 : 0xa3b85f);
   const sand = new THREE.Color(0xe6d3a7), wet = new THREE.Color(0xb2aa80), shelf = new THREE.Color(0x408f8a);
   colors.push(grass.r, grass.g, grass.b);
   for (let ring = 1; ring <= rings; ring++) {
@@ -36,7 +52,8 @@ export function createIslandTerrain(island, surfUniforms) {
       const x = Math.sin(angle) * radius, z = Math.cos(angle) * radius;
       positions.push(x, islandTerrainHeight(island, island.x + x, island.z + z), z);
       const patch = noise(x * .6, z * .6, island.z);
-      const color = grass.clone().lerp(sand, smooth(.55 + patch * .025, .78, ratio));
+      const edge = .57 + .045 * Math.sin(angle * 2 + island.x * .071 + island.z * .043) + .025 * Math.sin(angle * 5);
+      const color = grass.clone().lerp(sand, smooth(edge + patch * .035, edge + .19, ratio));
       color.lerp(wet, smooth(.86, 1.04, ratio)).lerp(shelf, smooth(1.04, 1.29, ratio));
       color.multiplyScalar(1 + patch * .055); colors.push(color.r, color.g, color.b);
       const b = 1 + (ring - 1) * segments + j, next = 1 + (ring - 1) * segments + (j + 1) % segments;
@@ -68,7 +85,8 @@ function detailMaterial(color, kind = 'stone') {
       .replace('#include <color_fragment>', `#include <color_fragment>
         float grain = detailNoise(floor(vDetailPosition * ${kind === 'ground' ? '52.0' : '31.0'}));
         ${kind === 'wood' ? 'grain = mix(grain, sin(vDetailPosition.x * 39.0 + sin(vDetailPosition.z * 7.0)*2.0)*.5+.5, .62);' : ''}
-        diffuseColor.rgb *= .95 + grain * .10;`);
+        diffuseColor.rgb *= .95 + grain * .10;
+        ${kind === 'stone' ? 'float patina=detailNoise(floor(vDetailPosition*2.4)); diffuseColor.rgb=mix(diffuseColor.rgb,diffuseColor.rgb*vec3(.68,.77,.55),smoothstep(.72,.93,patina)*.20);' : ''}`);
   };
   material.customProgramCacheKey = () => `voyage-detail-${kind}`;
   return material;
@@ -81,7 +99,7 @@ export function createIslandArt({ island, assets = {}, label, surfUniforms }) {
   root.position.set(island.x, 0, island.z);
   const terrain = createIslandTerrain(island, surfUniforms); root.add(terrain);
   const resource = new THREE.Group(); resource.name = `VoyageResource_${island.id}`; root.add(resource);
-  const animations = [], hints = [];
+  const animations = [], hints = [], grassPlacements = [], accents = [];
   const wood = detailMaterial(0x967145, 'wood'), darkWood = detailMaterial(0x584c3b, 'wood');
   const stone = detailMaterial(0x9a9c8b), paleStone = detailMaterial(0xc6bfa6);
   const brass = new THREE.MeshStandardMaterial({ color: 0xb49c62, roughness: .45, metalness: .55 });
@@ -101,6 +119,9 @@ export function createIslandArt({ island, assets = {}, label, surfUniforms }) {
     const t = THREE.MathUtils.clamp((x * lx + z * lz) / (lx * lx + lz * lz), 0, 1);
     return Math.hypot(x - lx * t, z - lz * t) < margin;
   };
+  const inLandmark = (x, z) => island.id === 'ruins'
+    ? Math.abs(x) < 3.6 && Math.abs(z + 2.55) < 2.55
+    : island.id === 'beacon' && Math.hypot(x, z + 2.9) < 1.6;
   const cloneProp = (source, x, z, scale, rotation = 0, parent = root) => {
     if (!source) return null;
     source.updateWorldMatrix(true, true);
@@ -112,21 +133,23 @@ export function createIslandArt({ island, assets = {}, label, surfUniforms }) {
     parent.add(wrapper); return wrapper;
   };
   function rock(x, z, size, material = stone) {
+    const sourceRock = cloneProp(assets.rock, x, z, size * 1.25, x * .23 + z);
+    if (sourceRock) {
+      sourceRock.position.y -= .04 * size;
+      sourceRock.scale.set(size * 1.45, size * 1.25, size * (1.1 + Math.sin(x) * .12));
+      accents.push({ x, z, radius: size * .8, kind: 'rock' });
+      return sourceRock;
+    }
     const m = ball(root, size, material, x, height(x, z) + size * .20, z);
     m.scale.set(1.1, .65, .85); m.rotation.set(x * .23, z, x * .14); return m;
   }
   function palm(x, z, scale = 1) {
-    if (clearPath(x, z, 2)) return;
+    if (clearPath(x, z, 2) || inLandmark(x, z) || Math.hypot(x, z) > islandShoreRadius(island, Math.atan2(x, z)) * .72) return;
     const p = cloneProp(assets.palm, x, z, scale, x * .43 + z * .7);
-    if (p) animations.push({ type: 'palm', object: p, phase: x + z });
+    if (p) { animations.push({ type: 'palm', object: p, phase: x + z }); accents.push({ x, z, radius: .4, kind: 'palm' }); }
   }
   function grass(x, z, size = .5) {
-    const g = new THREE.Group(); g.position.set(x, height(x, z) + .02, z); root.add(g);
-    for (let i = 0; i < 5; i++) {
-      const blade = mesh(g, new THREE.PlaneGeometry(.10 * size, .75 * size), leaf,
-        Math.sin(i * 2.4) * .13, .25 * size, Math.cos(i * 2.4) * .13);
-      blade.rotation.set(Math.sin(i) * .3, i * 2.4, Math.cos(i) * .2);
-    }
+    grassPlacements.push({ x, z, size });
   }
 
   // Weathered landing pier sits beside, not through, the avatar landing lane.
@@ -152,12 +175,20 @@ export function createIslandArt({ island, assets = {}, label, surfUniforms }) {
 
   if (island.resource === 'water') {
     const waterMat = new THREE.MeshStandardMaterial({ color: 0x3bb6b0, roughness: .18, metalness: .15, transparent: true, opacity: .88 });
-    const pool = mesh(resource, new THREE.CircleGeometry(1.65, 48), waterMat, 0, .93, 0); pool.rotation.x = -Math.PI / 2; pool.scale.y = .82;
+    const poolGeometry = new THREE.CircleGeometry(1.65, 48);
+    const poolPositions = poolGeometry.attributes.position;
+    for (let j = 1; j < poolPositions.count; j++) {
+      const x = poolPositions.getX(j), y = poolPositions.getY(j), a = Math.atan2(y, x);
+      const curve = 1 + .06 * Math.sin(a * 3) + .035 * Math.sin(a * 5 + .8);
+      poolPositions.setXY(j, x * curve, y * curve);
+    }
+    const pool = mesh(resource, poolGeometry, waterMat, 0, .93, 0); pool.rotation.x = -Math.PI / 2; pool.scale.y = .82;
     const basin = cylinder(resource, 1.75, 1.3, .12, paleStone, 0, .84, 0, 24); basin.scale.z = .82;
     for (let j = 0; j < 14; j++) {
       const angle = j / 14 * TAU;
-      const b = ball(resource, .24 + (j % 3) * .035, j % 2 ? paleStone : stone, Math.sin(angle) * 1.73, .95, Math.cos(angle) * 1.38);
-      b.scale.set(1.35, .7, 1); b.rotation.y = angle;
+      const x = Math.sin(angle) * 1.73, z = Math.cos(angle) * 1.38;
+      const b = cloneProp(assets.rock, x, z, .39 + (j % 3) * .05, angle, resource);
+      if (!b) { const fallback = ball(resource, .24 + (j % 3) * .035, j % 2 ? paleStone : stone, x, .95, z); fallback.scale.set(1.35, .7, 1); fallback.rotation.y = angle; }
     }
     for (let j = 0; j < 3; j++) {
       const ring = mesh(resource, new THREE.TorusGeometry(.35 + j * .4, .012, 4, 48),
@@ -165,11 +196,18 @@ export function createIslandArt({ island, assets = {}, label, surfUniforms }) {
       ring.rotation.x = -Math.PI / 2; ring.scale.y = .82; animations.push({ type: 'ripple', object: ring, phase: j });
     }
     for (let i = 0; i < 4; i++) {
-      const b = ball(resource, .55 - i * .06, stone, -.85 + Math.sin(i) * .25, 1.1 + i * .30, -1.1 - i * .10); b.scale.set(1.15, .75, .8);
+      const x = -.85 + Math.sin(i) * .25, z = -1.1 - i * .10;
+      const b = cloneProp(assets.rock, x, z, .72 - i * .07, i * .9, resource);
+      if (b) b.position.y = .9 + i * .22;
+      else ball(resource, .55 - i * .06, stone, x, 1.1 + i * .30, z).scale.set(1.15, .75, .8);
     }
-    const stream = cylinder(resource, .035, .055, .67, waterMat, -.7, 1.39, -.93, 8); stream.rotation.z = -.38;
+    const stream = cylinder(resource, .045, .070, .90, waterMat, -.7, 1.44, -.93, 8); stream.rotation.z = -.38;
     animations.push({ type: 'spring', object: stream });
     palm(-3.2, -3.3, .9); palm(3.8, 1.5, .85); palm(-3.9, 2.8, .68);
+    for (let j = 0; j < 10; j++) {
+      const a = j * 2.399, x = Math.sin(a) * 2.35, z = Math.cos(a) * 2.15;
+      if (!clearPath(x, z, 1.25)) grass(x, z, .85 + (j % 3) * .12);
+    }
     hints.push(label('淡水泉', resource, 0, 2.4, 0, 2.0));
   } else if (island.resource === 'food') {
     // Basket weave, coconut husks and split fruit make the resource readable.
@@ -181,7 +219,7 @@ export function createIslandArt({ island, assets = {}, label, surfUniforms }) {
       const c = ball(resource, .22, darkWood, x, 1.45 + (i % 2) * .1, z); c.scale.set(1, 1.15, 1);
       for (let j = 0; j < 3; j++) ball(resource, .018, wood, x + (j - 1) * .05, 1.69 + (i % 2) * .1, z);
     }
-    for (let i = 0; i < 8; i++) palm(Math.sin(i * 1.72) * (4.3 + i % 2), Math.cos(i * 1.72) * (4.3 + i % 2), .78 + (i % 3) * .11);
+    for (let i = 0; i < 11; i++) palm(Math.sin(i * 2.399) * (4.1 + (i % 3) * .6), Math.cos(i * 2.399) * (4.1 + (i % 3) * .6), .70 + (i % 4) * .10);
     hints.push(label('椰果补给', resource, 0, 2.2, 0, 2.2));
   } else if (island.resource === 'treasure') {
     // Broken temple with a traversable approach, masonry courses and fallen blocks.
@@ -229,6 +267,11 @@ export function createIslandArt({ island, assets = {}, label, surfUniforms }) {
     const packet = box(resource, .32, .03, .42, paleStone, .13, 1.6, .03); packet.rotation.y = .35;
     for (let j = 0; j < 3; j++) ball(resource, .036, brass, -.15 + j * .09, 1.64, .1);
     palm(3.1, 1.9, .7); hints.push(label('种子补给箱', resource, 0, 2.3, 0, 2.3));
+    for (let j = 0; j < 4; j++) {
+      const a = Math.atan2(island.x, island.z) + (j - 1.5) * .32;
+      const x = Math.sin(a) * island.radius * .58, z = Math.cos(a) * island.radius * .58;
+      if (!clearPath(x, z, 2.4) && Math.hypot(x, z) > 2.5 && Math.hypot(x, z + 2.9) > 1.8) rock(x, z, .75 + (j % 2) * .35);
+    }
   }
 
   // Sparse land accents leave the main approach and the resource interaction
@@ -236,14 +279,43 @@ export function createIslandArt({ island, assets = {}, label, surfUniforms }) {
   for (let j = 0; j < 18; j++) {
     const angle = j * 2.399 + island.z, radius = island.radius * (.30 + (j % 4) * .075);
     const x = Math.sin(angle) * radius, z = Math.cos(angle) * radius;
-    if (clearPath(x, z) || Math.hypot(x, z) < 2.4) continue;
-    if (j % 6 === 0) cloneProp(assets.bush, x, z, .32 + (j % 3) * .06, angle);
+    if (clearPath(x, z) || inLandmark(x, z) || Math.hypot(x, z) < 2.4) continue;
+    if (j % 5 === 0) {
+      cloneProp(assets.bush, x, z, .60 + (j % 3) * .08, angle);
+      accents.push({ x, z, radius: .65, kind: 'bush' });
+    }
     else grass(x, z, .5 + (j % 3) * .2);
   }
   for (let j = 0; j < 6; j++) {
     const a = j * 2.399 + island.x, r = island.radius * (.72 + (j % 2) * .12);
     const x = Math.sin(a) * r, z = Math.cos(a) * r;
     if (!clearPath(x, z, 2.4)) rock(x, z, .32 + (j % 3) * .16);
+  }
+
+  // One curved, tapered blade geometry and one draw call for the whole island.
+  // Avoid dozens of flat, rectangular grass planes over the flower assets.
+  if (grassPlacements.length) {
+    const vertices = [], triangles = [];
+    for (let blade = 0; blade < 5; blade++) {
+      const a = blade * 2.399, offset = vertices.length / 3;
+      for (let row = 0; row < 5; row++) {
+        const t = row / 4, width = row === 4 ? .004 : .045 * Math.sin((t + .2) * Math.PI / 1.3);
+        for (const side of [-1, 1]) vertices.push(Math.sin(a) * (.07 + t * t * .28) + Math.cos(a) * width * side,
+          t * .75 - t ** 4 * .10, Math.cos(a) * (.07 + t * t * .28) - Math.sin(a) * width * side);
+        if (row < 4) { const b = offset + row * 2; triangles.push(b, b + 1, b + 3, b, b + 3, b + 2); }
+      }
+    }
+    const geometry = new THREE.BufferGeometry(); geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geometry.setIndex(triangles); geometry.computeVertexNormals();
+    const tufts = new THREE.InstancedMesh(geometry, leaf, grassPlacements.length);
+    tufts.name = `VoyageGrass_${island.id}`; tufts.receiveShadow = true;
+    const dummy = new THREE.Object3D();
+    grassPlacements.forEach((p, index) => {
+      dummy.position.set(p.x, height(p.x, p.z), p.z); dummy.rotation.y = index * 2.399;
+      dummy.scale.setScalar(p.size); dummy.updateMatrix(); tufts.setMatrixAt(index, dummy.matrix);
+      tufts.setColorAt(index, new THREE.Color(index % 3 === 0 ? 0xbac78e : index % 3 === 1 ? 0xc9d5a5 : 0xe2daa1));
+    });
+    tufts.instanceMatrix.needsUpdate = true; root.add(tufts);
   }
 
   const driftPoint = islandResourcePoint(island, 'wood'), drift = new THREE.Group();
@@ -254,18 +326,19 @@ export function createIslandArt({ island, assets = {}, label, surfUniforms }) {
     cylinder(drift, .085, .085, .018, paleStone, .68 - j * .13, .14 + j * .06, j * .22, 10).rotation.z = Math.PI / 2;
   }
 
-  function reefInstances(source, count, seed, material) {
+  function reefInstances(source, count, seed, material, placements = null) {
     if (!source) return;
     source.updateWorldMatrix(true, true);
     const bounds = new THREE.Box3().setFromObject(source), center = bounds.getCenter(new THREE.Vector3());
-    const points = Array.from({ length: count }, (_, j) => {
+    const points = (placements || Array.from({ length: count }, (_, j) => {
       const a = j * 2.399 + seed, r = island.radius * (1.12 + .22 * ((j * 7 % 11) / 11));
       return { x: Math.sin(a) * r, z: Math.cos(a) * r, a, size: .35 + (j % 4) * .12 };
-    }).filter(p => Math.hypot(p.x - (dock.x - island.x), p.z - (dock.z - island.z)) > 3.3);
+    })).filter(p => Math.hypot(p.x - (dock.x - island.x), p.z - (dock.z - island.z)) > 3.3);
     source.traverse(child => {
       if (!child.isMesh || !points.length) return;
       const geometry = child.geometry.clone().applyMatrix4(child.matrixWorld).translate(-center.x, -bounds.min.y, -center.z);
       const inst = new THREE.InstancedMesh(geometry, material || child.material, points.length);
+      if (placements) inst.name = `VoyageBeachPebbles_${island.id}`;
       inst.receiveShadow = true;
       const dummy = new THREE.Object3D();
       points.forEach((p, index) => {
@@ -277,31 +350,30 @@ export function createIslandArt({ island, assets = {}, label, surfUniforms }) {
   reefInstances(assets.rock, 15, island.x, stone);
   reefInstances(assets.coral, 12, island.z);
   reefInstances(assets.seaGrass, 15, island.x + 10);
+  const pebbles = Array.from({ length: 15 }, (_, j) => {
+    const a = j * 2.399 + island.x * .21, r = islandShoreRadius(island, a) * (.84 + (j % 3) * .025);
+    return { x: Math.sin(a) * r, z: Math.cos(a) * r, a, size: .13 + (j % 4) * .035 };
+  }).filter(p => !clearPath(p.x, p.z, 2.4) && Math.hypot(p.x - (driftPoint.x - island.x), p.z - (driftPoint.z - island.z)) > 1.4);
+  reefInstances(assets.rock, 0, 0, null, pebbles);
   // Decorative fish stay offshore. They are not invisible gameplay rewards;
   // existing catchable fish continue to use the original fishing system.
   if (assets.fish) {
     assets.fish.updateWorldMatrix(true, true);
     const bounds = new THREE.Box3().setFromObject(assets.fish), center = bounds.getCenter(new THREE.Vector3());
-    const fishMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .44, metalness: .10,
-      transparent: true, opacity: .62, depthWrite: false });
-    fishMaterial.onBeforeCompile = shader => {
-      shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vFishDetail;')
-        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvFishDetail=position;');
-      shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vFishDetail;')
-        .replace('#include <color_fragment>', '#include <color_fragment>\nfloat stripe=smoothstep(.35,.70,sin(vFishDetail.x*35.)*.5+.5); diffuseColor.rgb*=mix(.65,1.15,stripe);');
-    };
+    const fishUniforms = [], fishMaterial = createFishMaterial({ animatedUniforms: fishUniforms });
     assets.fish.traverse(child => {
       if (!child.isMesh) return;
       const geometry = child.geometry.clone().applyMatrix4(child.matrixWorld).translate(-center.x, -center.y, -center.z);
       const inst = new THREE.InstancedMesh(geometry, fishMaterial, 12); inst.renderOrder = 3;
       inst.boundingSphere = new THREE.Sphere(new THREE.Vector3(), island.radius + 11);
-      for (let j = 0; j < 12; j++) inst.setColorAt(j, new THREE.Color(j % 2 ? 0x7ebbb1 : 0xb9c982));
-      const fish = Array.from({ length: inst.count }, (_, index) => createReefFish(island.radius,
-        { x: dock.x - island.x, z: dock.z - island.z }, index, Math.abs(island.x * 177 + island.z * 331) + index * 1031));
-      root.add(inst); animations.push({ type: 'fish', object: inst, fish, matrix: new THREE.Object3D() });
+      for (let j = 0; j < 12; j++) inst.setColorAt(j, new THREE.Color(j % 2 ? 0x68abc5 : 0xebbf54));
+      const fish = [];
+      for (let index = 0; index < inst.count; index++) fish.push(createReefFish(island.radius,
+        { x: dock.x - island.x, z: dock.z - island.z }, index, Math.abs(island.x * 177 + island.z * 331) + index * 1031, fish));
+      root.add(inst); animations.push({ type: 'fish', object: inst, fish, fishUniforms, matrix: new THREE.Object3D() });
     });
   }
-  return { root, terrain, resource, drift, buoy, animations, hints };
+  return { root, terrain, resource, drift, buoy, animations, hints, accents };
 }
 
 export function animateIslandArt(art, seconds, waterY, focus, deltaSeconds = 0) {
@@ -316,8 +388,9 @@ export function animateIslandArt(art, seconds, waterY, focus, deltaSeconds = 0) 
     else if (item.type === 'spring') item.object.scale.x = 1 + Math.sin(seconds * 8) * .1;
     else if (item.type === 'lantern') item.object.material.emissiveIntensity = 1.4 + Math.sin(seconds * 1.3) * .2;
     else if (item.type === 'fish') {
+      item.fishUniforms.forEach(uniform => { uniform.value = seconds; });
       for (let j = 0; j < item.object.count; j++) {
-        const fish = stepReefFish(item.fish[j], deltaSeconds);
+        const fish = stepReefFish(item.fish[j], deltaSeconds, item.fish);
         item.matrix.position.set(fish.x, -.54 + Math.sin(seconds * 1.3 + j) * .035, fish.z);
         item.matrix.rotation.y = -fish.heading; item.matrix.scale.setScalar(.42 + (j % 3) * .05); item.matrix.updateMatrix();
         item.object.setMatrixAt(j, item.matrix.matrix);

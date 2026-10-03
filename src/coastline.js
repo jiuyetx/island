@@ -30,6 +30,22 @@ export function coastlineShaderRadius(angle = 'ang') {
   return `${number(COASTLINE.shoreRadius)}*(1.0+${harmonics})+${features}`;
 }
 
-export function islandCoastlineShaderRadius(radius, angle, phaseX, phaseZ) {
-  return `(${radius})*(.955+.025*sin((${angle})*3.+(${phaseX}))+.015*sin((${angle})*5.+(${phaseZ})))`;
+export function islandShoreRadius(island, angle) {
+  const seed = island.x * .071 + island.z * .043;
+  const cove = Math.max(0, Math.cos(angle - seed));
+  const headland = Math.max(0, Math.cos(angle - seed - 2.2));
+  const shape = Math.max(.80, Math.min(.998, .915 + .070 * Math.sin(angle * 3 + seed)
+    + .040 * Math.sin(angle * 5 - seed * .7) + .020 * Math.sin(angle * 9 + seed * 1.3)
+    - .080 * cove ** 12 + .065 * headland ** 8));
+  const landing = Math.max(0, Math.cos(angle - Math.atan2(-island.x, -island.z))) ** 16;
+  return island.radius * (shape * (1 - landing) + .985 * landing);
+}
+
+export function islandCoastlineShaderRadius(radius, angle, phaseX, phaseZ,
+  landingAngle = `atan(-(${phaseX}),-(${phaseZ}))`) {
+  const seed = `((${phaseX})*.071+(${phaseZ})*.043)`;
+  const shape = `clamp(.915+.070*sin((${angle})*3.+${seed})+.040*sin((${angle})*5.-${seed}*.7)
+    +.020*sin((${angle})*9.+${seed}*1.3)-.080*pow(max(0.,cos((${angle})-${seed})),12.)
+    +.065*pow(max(0.,cos((${angle})-${seed}-2.2)),8.),.80,.998)`;
+  return `(${radius})*mix(${shape},.985,pow(max(0.,cos((${angle})-(${landingAngle}))),16.))`;
 }

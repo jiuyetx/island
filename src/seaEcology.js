@@ -1,4 +1,5 @@
 import { coastlineRadius } from './coastline.js';
+import { fishPointClear, fishAvoidanceDirection } from './fishSpacing.js';
 
 const FISH_SHORE_CLEARANCE = 3.2;
 
@@ -37,22 +38,25 @@ function chooseTarget(roamer) {
   roamer.targetZ = z;
 }
 
-export function createRoamer(radius, phase, speed, seed) {
-  const initialX = Math.cos(phase) * radius;
-  const initialZ = Math.sin(phase) * radius;
-  const shoreDistance = shoreRadiusAt(initialX, initialZ) + FISH_SHORE_CLEARANCE;
-  const safeRadius = Math.max(radius, shoreDistance);
+export function createRoamer(radius, phase, speed, seed, neighbors = [], clearanceRadius = .6) {
   const roamer = {
-    homeX: Math.cos(phase) * safeRadius, homeZ: Math.sin(phase) * safeRadius,
-    x: Math.cos(phase) * safeRadius, z: Math.sin(phase) * safeRadius,
     targetX: 0, targetZ: 0, heading: 0, speed, seed: seed >>> 0,
+    clearanceRadius, active: true,
   };
+  for (let attempt = 0; attempt < 128; attempt++) {
+    const angle = phase + attempt * 2.399;
+    const safeRadius = Math.max(radius + Math.floor(attempt / 32) * 1.5,
+      shoreRadiusAt(Math.cos(angle), Math.sin(angle)) + FISH_SHORE_CLEARANCE);
+    roamer.x = roamer.homeX = Math.cos(angle) * safeRadius;
+    roamer.z = roamer.homeZ = Math.sin(angle) * safeRadius;
+    if (fishPointClear(roamer, roamer.x, roamer.z, neighbors)) break;
+  }
   chooseTarget(roamer);
   roamer.heading = Math.atan2(roamer.targetZ - roamer.z, roamer.targetX - roamer.x);
   return roamer;
 }
 
-export function stepRoamer(roamer, seconds) {
+export function stepRoamer(roamer, seconds, neighbors = []) {
   let dx = roamer.targetX - roamer.x;
   let dz = roamer.targetZ - roamer.z;
   let distance = Math.hypot(dx, dz);
@@ -63,17 +67,20 @@ export function stepRoamer(roamer, seconds) {
     distance = Math.hypot(dx, dz);
   }
   if (distance <= 0 || seconds <= 0) return roamer;
-  const step = Math.min(distance, roamer.speed * seconds);
-  const nextX = roamer.x + dx / distance * step;
-  const nextZ = roamer.z + dz / distance * step;
-  if (Math.hypot(nextX, nextZ) <= shoreRadiusAt(nextX, nextZ) + FISH_SHORE_CLEARANCE) {
+  const dt = Math.min(.1, seconds);
+  const direction = fishAvoidanceDirection(roamer, dx, dz, neighbors);
+  const step = Math.min(distance, roamer.speed * dt);
+  const nextX = roamer.x + direction.x * step;
+  const nextZ = roamer.z + direction.z * step;
+  if (Math.hypot(nextX, nextZ) <= shoreRadiusAt(nextX, nextZ) + FISH_SHORE_CLEARANCE
+    || !fishPointClear(roamer, nextX, nextZ, neighbors)) {
     chooseTarget(roamer);
     return roamer;
   }
   roamer.x = nextX;
   roamer.z = nextZ;
-  const desired = Math.atan2(dz, dx);
+  const desired = Math.atan2(direction.z, direction.x);
   const turn = Math.atan2(Math.sin(desired - roamer.heading), Math.cos(desired - roamer.heading));
-  roamer.heading += turn * Math.min(1, seconds * 1.8);
+  roamer.heading += turn * Math.min(1, dt * 1.8);
   return roamer;
 }

@@ -43,6 +43,8 @@ export function createBeachMaterial(surfUniforms = {}, { island = null } = {}) {
         vec4 beachSwash=coastSwash(vBeachWorld,shoreDistance,uSwashTime,uSwashTide,uSwashStorm,${limit})*beachMask;
         float mottling=beachNoise(beachP*.62)+beachNoise(beachP*1.7)*.32;
         float grain=beachNoise(beachP*65.0)-.5;
+        float landPatch=beachNoise(beachP*.85)+beachNoise(beachP*3.5)*.3;
+        diffuseColor.rgb*=mix(.92+(landPatch-.6)*.14+(beachNoise(beachP*28.0)-.5)*.045,1.,beachMask);
         float damp=1.0-smoothstep(.25,2.2+(mottling-.6)*1.6,shoreDistance);
         // Warm porous upper sand and cool, irregular tide-washed patches.
         diffuseColor.rgb*=mix(1.,.92+(mottling-.6)*.22+grain*.12,beachMask);

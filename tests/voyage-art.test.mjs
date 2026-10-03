@@ -3,7 +3,8 @@ import { readFile } from 'node:fs/promises';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { ISLANDS, landingPoint, navigable } from '../src/voyage.js';
-import { createIslandArt, animateIslandArt, islandShoreRadius, islandTerrainHeight } from '../src/voyageArt.js';
+import { createIslandArt, animateIslandArt, islandShoreRadius, islandTerrainHeight, islandWalkPoint } from '../src/voyageArt.js';
+import { islandCoastlineShaderRadius } from '../src/coastline.js';
 import { createReefFish, safeReefFishPoint, stepReefFish } from '../src/reefFish.js';
 
 const bytes = await readFile(new URL('../assets/generated/tropical-vegetation.glb', import.meta.url));
@@ -13,14 +14,45 @@ const assets = Object.fromEntries(Object.entries({ palm: 'Palm_Source', bush: 'B
 let rockMesh; assets.rock.traverse(o => { if (o.isMesh) rockMesh = o; });
 const originalVertices = rockMesh.geometry.attributes.position.array.slice();
 for (const island of ISLANDS) {
+  // Evaluate the generated surf expression independently of the terrain helper.
+  const shaderExpression = islandCoastlineShaderRadius('radius', 'angle', 'x', 'z', 'landingAngle')
+    .replace(/\b(sin|cos|pow|max)\(/g, 'Math.$1(');
+  const shaderRadius = new Function('radius', 'angle', 'x', 'z', 'landingAngle', 'clamp', 'mix', `return ${shaderExpression}`);
+  const shores = [];
   for (let j = 0; j < 200; j++) {
     const angle = j / 200 * Math.PI * 2, shore = islandShoreRadius(island, angle);
+    shores.push(shore);
+    const surf = shaderRadius(island.radius, angle, island.x, island.z, Math.atan2(-island.x, -island.z),
+      (v, a, b) => Math.max(a, Math.min(b, v)), (a, b, t) => a * (1 - t) + b * t);
+    assert.ok(Math.abs(surf - shore) < 1e-9, 'surf, sand and walking share the irregular coast');
+    assert.ok(Math.abs(shore - islandShoreRadius(island, angle + Math.PI * 2)) < 1e-9, 'coast wraps without a seam');
     assert.ok(shore <= island.radius, 'art never expands dry land into a navigable route');
     assert.ok(Math.abs(islandTerrainHeight(island, island.x + Math.sin(angle) * shore, island.z + Math.cos(angle) * shore)) < .0001, 'shore is at sea level');
+    const walk = islandWalkPoint(island, { x: island.x + Math.sin(angle) * island.radius * 3, z: island.z + Math.cos(angle) * island.radius * 3 });
+    assert.ok(islandTerrainHeight(island, walk.x, walk.z) > .12, 'new bays cannot put the walking destination under high tide');
+    const restored = islandWalkPoint(island, walk);
+    assert.ok(Math.hypot(restored.x - walk.x, restored.z - walk.z) < 1e-9, 'restored shore positions remain stable');
+  }
+  assert.ok(Math.max(...shores) - Math.min(...shores) > island.radius * .12, 'islands have visible coves rather than a circular sand ring');
+  const edgePoints = Array.from({ length: 24 }, (_, j) => islandWalkPoint(island,
+    { x: island.x + Math.sin(j / 24 * Math.PI * 2) * island.radius, z: island.z + Math.cos(j / 24 * Math.PI * 2) * island.radius }));
+  for (const from of edgePoints) for (const to of edgePoints) for (let step = 0; step <= 12; step++) {
+    const t = step / 12;
+    assert.ok(islandTerrainHeight(island, from.x * (1 - t) + to.x * t, from.z * (1 - t) + to.z * t) > .12,
+      'straight walks between reachable shore points never cut through a flooded bay');
   }
   const landing = landingPoint(island, true), mooring = landingPoint(island);
   assert.ok(islandTerrainHeight(island, landing.x, landing.z) > .08, 'landing remains dry even at high tide');
   assert.ok(navigable(mooring.x, mooring.z));
+  assert.deepEqual(islandWalkPoint(island, landing), landing, 'the original landing position remains usable');
+  for (let j = 0; j < 24; j++) {
+    const angle = j / 24 * Math.PI * 2;
+    assert.ok(Math.abs(islandTerrainHeight(island, island.x + Math.sin(angle) * 1.7, island.z + Math.cos(angle) * 1.4) - .9) < 1e-9,
+      'resource clearing stays level and the spring surface stays above the ground');
+  }
+  if (island.id === 'ruins') for (const x of [-3.25, 0, 3.25]) for (const z of [-4.75, -2.55, -.35]) {
+    assert.ok(Math.abs(islandTerrainHeight(island, island.x + x, island.z + z) - .9) < 1e-9, 'temple platform remains grounded across its footprint');
+  }
   const art = createIslandArt({ island, assets, label: (_text, parent, x, y, z) => {
     const hint = new THREE.Object3D(); hint.position.set(x, y, z); parent.add(hint); return hint;
   } });
@@ -37,9 +69,14 @@ for (const island of ISLANDS) {
   art.root.traverse(object => {
     if (!object.isMesh) return;
     calls++;
-    if (object.isInstancedMesh) assert.ok(object.count <= 15, 'reef/fish batch is bounded');
+    if (object.isInstancedMesh) assert.ok(object.count <= (object.name.startsWith('VoyageGrass_') ? 32 : 15), 'grass, reef and fish batches are bounded');
   });
-  assert.ok(calls < 230, `bounded island draw calls: ${calls}`);
+  assert.ok(calls < 150, `bounded island draw calls after batching grass: ${calls}`);
+  for (const accent of art.accents) {
+    const lx = landing.x - island.x, lz = landing.z - island.z;
+    const t = Math.max(0, Math.min(1, (accent.x * lx + accent.z * lz) / (lx * lx + lz * lz)));
+    assert.ok(Math.hypot(accent.x - lx * t, accent.z - lz * t) > accent.radius + .65, 'main resource approach stays clear of new plants and boulders');
+  }
   animateIslandArt(art, 12, .12, { x: island.x, z: island.z });
   assert.ok(art.hints.every(h => h.visible), 'nearby resource labels visible');
   animateIslandArt(art, 15, -.16, { x: 0, z: 0 });

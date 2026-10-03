@@ -5,6 +5,7 @@ import { createBeachMaterial } from './beachMaterial.js';
 import { COAST_SWASH_GLSL } from './coastSwash.js';
 import { groundPlacements } from './terrain.js';
 import { createRoamer, offshorePlacements, shoreRadiusAt, stepRoamer, upperBeachPoint } from './seaEcology.js';
+import { createFishMaterial } from './fishVisual.js';
 import { sparseBushPlacements } from './bushLayout.js';
 import { createFoliageMaterial, applyFoliageAtlas } from './foliageMaterial.js';
 import { planWalkRoute } from './navigation.js';
@@ -66,6 +67,7 @@ const X_AXIS = new THREE.Vector3(1, 0, 0);
 const interactive = [];
 const animated = [];
 const animatedShaderUniforms = [];
+const fishRoamers = [];
 const windShaderUniforms = [];
 const hutRoofs = [];
 let heroBoat = null;
@@ -904,10 +906,11 @@ const water = mesh(
       uMoonDirection: { value: new THREE.Vector3(-.6, .7, .4).normalize() },
       uSunDirection: { value: new THREE.Vector3(-.4, .8, -.3).normalize() },
       uIslands: { value: ISLANDS.map(i => new THREE.Vector3(i.x, i.z, i.radius)) },
+      uIslandLandingAngles: { value: ISLANDS.map(i => Math.atan2(-i.x, -i.z)) },
     },
     vertexShader: `varying vec3 vWorld; void main(){ vec4 w=modelMatrix*vec4(position,1.); vWorld=w.xyz; gl_Position=projectionMatrix*viewMatrix*w; }`,
     fragmentShader: `
-      uniform float uTime, uBoatWake, uTide, uStorm, uDaylight,uSunlight,uMoonlight; uniform vec2 uBoat,uBoatDir; uniform vec3 uLagoon,uShallow,uDeep,uFoam,uSunDirection,uMoonDirection; uniform vec3 uIslands[4]; varying vec3 vWorld;
+      uniform float uTime, uBoatWake, uTide, uStorm, uDaylight,uSunlight,uMoonlight; uniform vec2 uBoat,uBoatDir; uniform vec3 uLagoon,uShallow,uDeep,uFoam,uSunDirection,uMoonDirection; uniform vec3 uIslands[4]; uniform float uIslandLandingAngles[4]; varying vec3 vWorld;
       ${COAST_SWASH_GLSL}
       float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453123); }
       float noise(vec2 p){
@@ -928,7 +931,7 @@ const water = mesh(
         for(int i=0;i<4;i++){
           vec2 delta=p-uIslands[i].xy;
           float islandAngle=atan(delta.x,delta.y);
-          float islandShore=${islandCoastlineShaderRadius('uIslands[i].z', 'islandAngle', 'uIslands[i].x', 'uIslands[i].y')};
+          float islandShore=${islandCoastlineShaderRadius('uIslands[i].z', 'islandAngle', 'uIslands[i].x', 'uIslands[i].y', 'uIslandLandingAngles[i]')};
           float islandWet=islandShore-uTide*.2;
           float islandDepth=max(0.0,length(delta)-islandWet);
           if(islandDepth<shoreDepth){shoreDepth=islandDepth;shore=islandShore;wetShore=islandWet;r=length(delta);ang=islandAngle;runupLimit=min(3.2,uIslands[i].z*.22);}
@@ -1356,6 +1359,7 @@ function addSchool(source, count, seed, tint, baseY, material, options = {}) {
   let state = seed >>> 0;
   const rand = () => { state = (state * 1664525 + 1013904223) >>> 0; return state / 4294967296; };
   const data = [];
+  const fishBounds = wander ? new THREE.Box3().setFromObject(source).getSize(new THREE.Vector3()) : null;
   let groundMinY = 0;
   if (speciesId === 'crab') {
     groundMinY = Infinity;
@@ -1374,7 +1378,7 @@ function addSchool(source, count, seed, tint, baseY, material, options = {}) {
       radius,
       speed: wander ? speed : speed * (rand() < .5 ? -1 : 1),
       phase,
-      roamer: wander ? createRoamer(radius, phase, speed, seed + i * 73) : null,
+      roamer: null,
       crab: speciesId === 'crab' ? createSandCrab(radius, phase, seed + i * 73) : null,
       bob: rand() * Math.PI * 2,
       y: baseY + (rand() - .5) * spread,
@@ -1383,6 +1387,11 @@ function addSchool(source, count, seed, tint, baseY, material, options = {}) {
       bobble,
       groundMinY,
     });
+    if (wander) {
+      const member = data[i], footprint = Math.hypot(fishBounds.x, fishBounds.z) * member.size * .5 + .1;
+      member.roamer = createRoamer(radius, phase, speed, seed + i * 73, fishRoamers, footprint);
+      fishRoamers.push(member.roamer);
+    }
   }
   if (speciesId) data.forEach((member, index) => {
     const target = { id: `marine-${speciesId}-${seed}-${index}`, speciesId, member, source,
@@ -1524,55 +1533,29 @@ async function loadSceneAssets() {
   const coralSites = offshorePlacements(scatter(68, 16.5, 23.5, 19, -1.7, 0, .36, .68), 2.1);
   addInstances(coralSource, groundPlacements(coralSource, coralSites, reefFloor), reefMaterial, [...coralTint, ...bloomTint]);
 
-  const fishMaterial = (pattern) => {
-    const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .52, metalness: 0,
-      transparent: true, opacity: .58, depthWrite: false });
-    // In the clear-water pass fish remain partly submerged, but their markings
-    // are legible instead of being obscured by the near-opaque ocean overlay.
-    material.userData.surfaceSchool = true;
-    material.onBeforeCompile = (shader) => {
-      shader.uniforms.uCreatureTime = { value: 0 };
-      animatedShaderUniforms.push(shader.uniforms.uCreatureTime);
-      shader.vertexShader = shader.vertexShader.replace('#include <common>',
-        '#include <common>\nuniform float uCreatureTime;\nvarying vec3 vFishLocal;')
-        .replace('#include <begin_vertex>', `#include <begin_vertex>
-          vFishLocal = position;
-          float tailWeight=1.0-smoothstep(-.72,-.16,position.x);
-          transformed.z+=sin(uCreatureTime*5.0+position.x*3.8)*.055*tailWeight;`);
-      shader.fragmentShader = shader.fragmentShader.replace('#include <common>',
-        '#include <common>\nvarying vec3 vFishLocal;')
-        .replace('#include <color_fragment>', `#include <color_fragment>
-          float body = smoothstep(-.42, -.32, vFishLocal.x) * (1.0 - smoothstep(.39, .49, vFishLocal.x));
-          float eye = 1.0 - smoothstep(.005, .025, length(vec2((vFishLocal.x-.38)*.9, vFishLocal.y-.06)));
-          float gill = (1.0 - smoothstep(.009, .024, abs(vFishLocal.x-.27))) * body;
-          ${pattern}
-          diffuseColor.rgb *= 1.0 - eye*.82 - gill*.26;`);
-    };
-    material.customProgramCacheKey = () => `island-fish-pattern-${pattern}`;
-    return material;
-  };
+  const fishMaterial = (pattern) => createFishMaterial({ pattern, animatedUniforms: animatedShaderUniforms });
   const reefStripeMaterial = fishMaterial(`
     float band = 1.0 - smoothstep(.48, .80, sin(vFishLocal.x*26.0));
-    diffuseColor.rgb *= 1.0 - .48*band*body;
+    diffuseColor.rgb *= 1.0 - .68*band*body;
     diffuseColor.rgb += vec3(.08,.08,.02) * smoothstep(.02,.14,vFishLocal.y) * body;`);
   const lagoonSpotMaterial = fishMaterial(`
     float spots = sin(vFishLocal.x*38.0) * sin(vFishLocal.y*37.0 + vFishLocal.z*27.0);
     float mark = smoothstep(.65,.88,spots)*body;
-    diffuseColor.rgb *= 1.0 - .52*mark;
+    diffuseColor.rgb *= 1.0 - .72*mark;
     diffuseColor.rgb += vec3(.08,.04,.02) * smoothstep(.04,.19,vFishLocal.y) * body;`);
   const silverJackMaterial = fishMaterial(`
     float flank = 1.0 - smoothstep(.014,.06,abs(vFishLocal.y-.08));
-    diffuseColor.rgb *= 1.0 - .56*flank*body;
+    diffuseColor.rgb *= 1.0 - .72*flank*body;
     diffuseColor.rgb += vec3(.10,.12,.12) * (1.0-smoothstep(-.13,.03,vFishLocal.y)) * body;`);
   const animalMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .5, metalness: 0 });
-  addSchool(reefSource('Fish_A'), 24, 71, [0xefd38b, 0xe4bd78].map((c) => new THREE.Color(c)), -.75, reefStripeMaterial,
+  addSchool(reefSource('Fish_A'), 24, 71, [0xf2c24e, 0xe6a73d].map((c) => new THREE.Color(c)), -.75, reefStripeMaterial,
             { radiusMin: 16.5, radiusMax: 18.5, spread: .9, sizeMin: .76, sizeMax: 1.22, speedMin: .24, speedMax: .45, wander: true, speciesId: 'reefFish' });
-  addSchool(reefSource('Fish_B'), 16, 83, [0xe68d65, 0xd7715d].map((c) => new THREE.Color(c)), -1.1, lagoonSpotMaterial,
+  addSchool(reefSource('Fish_B'), 16, 83, [0xea7643, 0xd95b43].map((c) => new THREE.Color(c)), -1.1, lagoonSpotMaterial,
             { radiusMin: 16.5, radiusMax: 18.5, spread: .8, sizeMin: .76, sizeMax: 1.13, speedMin: .22, speedMax: .41, wander: true, speciesId: 'reefFish' });
   const crabSource = new THREE.Mesh(createSandCrabGeometry(), createSandCrabMaterial());
   addSchool(crabSource, 7, 103, [new THREE.Color(0xffceac), new THREE.Color(0xf8b786)], .75, crabSource.material,
             { radiusMin: 12.6, radiusMax: 14.2, spread: .06, sizeMin: .42, sizeMax: .54, bobble: .012, speedMin: .025, speedMax: .06, speciesId: 'crab' });
-  addSchool(reefSource('Sea_SilverJack'), 12, 107, [new THREE.Color(0xbce6e1), new THREE.Color(0x9fd2d5)], -.82, silverJackMaterial,
+  addSchool(reefSource('Sea_SilverJack'), 12, 107, [new THREE.Color(0xa2d5e1), new THREE.Color(0x7bb6ce)], -.82, silverJackMaterial,
             { radiusMin: 22, radiusMax: 31, spread: .65, sizeMin: .9, sizeMax: 1.34, bank: .08, speedMin: .3, speedMax: .54, wander: true, speciesId: 'silverJack' });
   addSchool(reefSource('Sea_Lobster'), 5, 109, [new THREE.Color(0xc75b43), new THREE.Color(0xdf7653)], -1.42, animalMaterial,
             { radiusMin: 18, radiusMax: 24, spread: .12, sizeMin: .6, sizeMax: .85, bobble: .02, speedMin: .02, speedMax: .05, speciesId: 'lobster' });
@@ -4150,6 +4133,7 @@ function frame(timeMs) {
       (focus?.z || 0) + Math.sin(azimuth) * 24 + Math.cos(time * 1.5) * stormWind * .018);
     camera.lookAt(focus?.x || 0, 0, focus?.z || 0);
   }
+  for (const target of marineTargets) if (target.member.roamer) target.member.roamer.active = targetAvailable(target);
   for (const item of animated) {
     if (item.school) {
       const { inst, data, matrix, pos, quat, bankQuat, scale, crabGait, normal, slopeQuat } = item.school;
@@ -4164,7 +4148,7 @@ function frame(timeMs) {
           pos.set(fish.crab.x, fish.y, fish.crab.z);
           heading = fish.crab.heading;
         } else if (fish.roamer) {
-          stepRoamer(fish.roamer, deltaSeconds);
+          stepRoamer(fish.roamer, deltaSeconds, fishRoamers);
           pos.set(fish.roamer.x, fish.y + Math.sin(time * .85 + fish.bob) * fish.bobble, fish.roamer.z);
           heading = fish.roamer.heading;
         } else {

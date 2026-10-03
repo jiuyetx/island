@@ -1,3 +1,5 @@
+import { fishPointClear, fishAvoidanceDirection } from './fishSpacing.js';
+
 const TAU = Math.PI * 2;
 const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
 const angleDelta = angle => Math.atan2(Math.sin(angle), Math.cos(angle));
@@ -35,21 +37,22 @@ function chooseTarget(fish) {
 
 // Each fish owns a small feeding patch, not an island-centred angular orbit.
 // Targets, speed changes and pauses are independently seeded and frame based.
-export function createReefFish(islandRadius, port, index, seed) {
+export function createReefFish(islandRadius, port, index, seed, neighbors = []) {
   const fish = { islandRadius, portX: port.x, portZ: port.z, seed: seed >>> 0,
-    speed: 0, heading: 0, pause: 0, targetSeconds: 0 };
+    speed: 0, heading: 0, pause: 0, targetSeconds: 0, clearanceRadius: .5, active: true };
   let angle = index * 2.399 + random(fish) * .6;
   const radius = islandRadius + 5.5 + random(fish) * 1.1;
   let x = Math.cos(angle) * radius, z = Math.sin(angle) * radius;
-  if (Math.hypot(x - port.x, z - port.z) < 4) {
-    angle += .65; x = Math.cos(angle) * radius; z = Math.sin(angle) * radius;
+  for (let attempt = 0; attempt < 128; attempt++) {
+    if (Math.hypot(x - port.x, z - port.z) >= 4 && fishPointClear(fish, x, z, neighbors)) break;
+    angle += .37; x = Math.cos(angle) * radius; z = Math.sin(angle) * radius;
   }
   fish.x = fish.homeX = x; fish.z = fish.homeZ = z;
   chooseTarget(fish); fish.heading = Math.atan2(fish.targetZ - z, fish.targetX - x);
   return fish;
 }
 
-export function stepReefFish(fish, seconds) {
+export function stepReefFish(fish, seconds, neighbors = []) {
   const dt = clamp(Number.isFinite(seconds) ? seconds : 0, 0, .1);
   if (!dt) return fish;
   fish.targetSeconds -= dt;
@@ -63,14 +66,15 @@ export function stepReefFish(fish, seconds) {
     if (random(fish) < .32) { fish.pause = .7 + random(fish) * 2; fish.speed = 0; return fish; }
     chooseTarget(fish);
   }
-  const desired = Math.atan2(fish.targetZ - fish.z, fish.targetX - fish.x);
+  const direction = fishAvoidanceDirection(fish, fish.targetX - fish.x, fish.targetZ - fish.z, neighbors);
+  const desired = Math.atan2(direction.z, direction.x);
   const turn = angleDelta(desired - fish.heading);
   fish.heading = angleDelta(fish.heading + clamp(turn, -dt * .9, dt * .9));
   const desiredSpeed = fish.cruiseSpeed * Math.max(.08, Math.cos(turn));
   fish.speed += clamp(desiredSpeed - fish.speed, -dt * 1.2, dt * .5);
   const x = fish.x + Math.cos(fish.heading) * fish.speed * dt;
   const z = fish.z + Math.sin(fish.heading) * fish.speed * dt;
-  if (!safeReefFishPoint(fish, x, z)) { fish.speed = 0; chooseTarget(fish); return fish; }
+  if (!safeReefFishPoint(fish, x, z) || !fishPointClear(fish, x, z, neighbors)) { fish.speed = 0; chooseTarget(fish); return fish; }
   fish.x = x; fish.z = z;
   return fish;
 }

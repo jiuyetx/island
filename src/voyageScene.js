@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { offscreen } from './platform.js';
 import { BOAT_MOOR } from './boat.js';
 import { ISLANDS, PORTS, autopilotInput, landingPoint, normalizeVoyage, planSeaRoute, stepHelm, harvestIsland } from './voyage.js';
-import { createIslandArt, animateIslandArt, islandTerrainHeight as terrainHeight } from './voyageArt.js';
+import { createIslandArt, animateIslandArt, islandWalkPoint, islandTerrainHeight as terrainHeight } from './voyageArt.js';
 import { voyageSupplies } from './playerGuidance.js';
 
 
@@ -203,6 +203,8 @@ export function createVoyageScene({ scene, hudScene, state, interactive, getAvat
     resume() {
       if (v.mode === 'ashore') {
         const island = ISLANDS.find(i => i.id === v.islandId);
+        const point = islandWalkPoint(island, { x: v.walkX, z: v.walkZ });
+        v.walkX = point.x; v.walkZ = point.z;
         getAvatar().position.set(v.walkX, terrainHeight(island, v.walkX, v.walkZ) + .02, v.walkZ);
       }
       state.boatMoored = v.mode === 'home'; paint();
@@ -234,8 +236,8 @@ export function createVoyageScene({ scene, hudScene, state, interactive, getAvat
       }
       if (v.mode === 'ashore') {
         if (point) {
-          const island = ISLANDS.find(i => i.id === v.islandId), dx = point.x - island.x, dz = point.z - island.z, r = Math.hypot(dx, dz), limit = island.radius - 1.5;
-          walkTarget = { x: island.x + dx * Math.min(1, limit / (r || 1)), z: island.z + dz * Math.min(1, limit / (r || 1)) }; pendingGather = null; pendingDeparture = undefined;
+          const island = ISLANDS.find(i => i.id === v.islandId);
+          walkTarget = islandWalkPoint(island, point); pendingGather = null; pendingDeparture = undefined;
         }
         return true;
       }
